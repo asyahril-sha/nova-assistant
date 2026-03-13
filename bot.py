@@ -900,24 +900,30 @@ Ayo ngobrol... 💕"""
             )
     
     async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Lihat status"""
-        user_id = update.effective_user.id
-        
-        if user_id not in self.sessions:
-            await update.message.reply_text("❌ Belum ada hubungan.")
-            return
-        
-        memory = self.get_memory(user_id)
-        level = memory.fast_memory.current_level
-        progress = memory.fast_memory.level_progress * 100
-        remaining = 30 - (memory.fast_memory.message_count * 1)  # estimasi
-        
-        style = memory.fast_memory.user_preferences.get_response_style(user_id)
-        
-        # Progress bar
-        bar = "▓" * int(progress/10) + "░" * (10 - int(progress/10))
-        
-        status = f"""
+    """Lihat status"""
+    user_id = update.effective_user.id
+    
+    if user_id not in self.sessions:
+        await update.message.reply_text("❌ Belum ada hubungan.")
+        return
+    
+    memory = self.get_memory(user_id)
+    level = memory.fast_memory.current_level
+    progress = memory.fast_memory.level_progress * 100
+    remaining = 30 - (memory.fast_memory.message_count * 1)  # estimasi
+    
+    style = memory.fast_memory.user_preferences.get_response_style(user_id)
+    
+    # Progress bar
+    bar = "▓" * int(progress/10) + "░" * (10 - int(progress/10))
+    
+    # PERBAIKAN: gunakan .get() dengan default value 0
+    romantic_ratio = style.get("romantic_ratio", 0)
+    vulgar_ratio = style.get("vulgar_ratio", 0)
+    dominant_type = style.get("dominant_type", "normal")
+    speed_type = style.get("speed_type", "normal")
+    
+    status = f"""
 📊 **STATUS HUBUNGAN**
 
 Level: {level}/7 {bar}
@@ -925,14 +931,14 @@ Progress: {progress:.0f}%
 Estimasi ke Level 7: {max(0, remaining)} menit
 
 📈 **GAYA CHAT KAMU**
-• Dominan: {style['dominant_style']}
-• Kecepatan: {style['speed_style']}
-• Romantis: {style['romantic_ratio']:.0%}
-• Vulgar: {style['vulgar_ratio']:.0%}
+• Dominan: {dominant_type}
+• Kecepatan: {speed_type}
+• Romantis: {romantic_ratio:.0%}
+• Vulgar: {vulgar_ratio:.0%}
 
 💬 Total pesan: {memory.fast_memory.message_count}
 """
-        await update.message.reply_text(status)
+    await update.message.reply_text(status)
     
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Help"""
