@@ -2727,7 +2727,7 @@ Kita lanjutkan dari level {START_LEVEL} ya...
             else:
                 await update.message.reply_text(msg)
                 
-# ===================== MAIN FUNCTION (FIXED) =====================
+# ===================== MAIN FUNCTION (FIXED INDENTATION) =====================
 
 def main():
     """Main function dengan semua handler"""
@@ -2736,43 +2736,43 @@ def main():
     app = Application.builder().token(os.getenv("TELEGRAM_TOKEN")).build()
     
     # Conversation handler untuk start
-start_conv = ConversationHandler(
-    entry_points=[CommandHandler('start', bot.start_command)],
-    states={
-        0: [CallbackQueryHandler(bot.start_pause_callback, pattern='^(unpause|new|cancel)$')],
-        SELECTING_ROLE: [CallbackQueryHandler(bot.role_callback, pattern='^role_')],
-    },
-    fallbacks=[CommandHandler('cancel', lambda u,c: ConversationHandler.END)],
-    per_message=False,  # ← UBAH
-    per_user=True,
-    per_chat=True
-)
-
-# Conversation handler untuk back
-back_conv = ConversationHandler(
-    entry_points=[CommandHandler('back', bot.back_command)],
-    states={
-        1: [MessageHandler(filters.TEXT & ~filters.COMMAND, bot.back_number_handler)],
-    },
-    fallbacks=[CommandHandler('cancel', lambda u,c: ConversationHandler.END)],
-    per_message=False,  # ← UBAH
-    per_user=True,
-    per_chat=True
-)
-
-# Conversation handler untuk end
-end_conv = ConversationHandler(
-    entry_points=[CommandHandler('end', bot.end_command), CommandHandler('close', bot.close_command)],
-    states={
-        CONFIRM_END: [CallbackQueryHandler(bot.end_callback, pattern='^end_')],
-    },
-    fallbacks=[CommandHandler('cancel', lambda u,c: ConversationHandler.END)],
-    per_message=False,  # ← UBAH
-    per_user=True,
-    per_chat=True
-)
+    start_conv = ConversationHandler(
+        entry_points=[CommandHandler('start', bot.start_command)],
+        states={
+            0: [CallbackQueryHandler(bot.start_pause_callback, pattern='^(unpause|new|cancel)$')],
+            SELECTING_ROLE: [CallbackQueryHandler(bot.role_callback, pattern='^role_')],
+        },
+        fallbacks=[CommandHandler('cancel', lambda u,c: ConversationHandler.END)],
+        per_message=False,
+        per_user=True,
+        per_chat=True
+    )
     
-    # Add handlers
+    # Conversation handler untuk back
+    back_conv = ConversationHandler(
+        entry_points=[CommandHandler('back', bot.back_command)],
+        states={
+            1: [MessageHandler(filters.TEXT & ~filters.COMMAND, bot.back_number_handler)],
+        },
+        fallbacks=[CommandHandler('cancel', lambda u,c: ConversationHandler.END)],
+        per_message=False,
+        per_user=True,
+        per_chat=True
+    )
+    
+    # Conversation handler untuk end
+    end_conv = ConversationHandler(
+        entry_points=[CommandHandler('end', bot.end_command), CommandHandler('close', bot.close_command)],
+        states={
+            CONFIRM_END: [CallbackQueryHandler(bot.end_callback, pattern='^end_')],
+        },
+        fallbacks=[CommandHandler('cancel', lambda u,c: ConversationHandler.END)],
+        per_message=False,
+        per_user=True,
+        per_chat=True
+    )
+    
+    # Add handlers - PASTIKAN INDENTASI INI RAPI (4 spasi)
     app.add_handler(start_conv)
     app.add_handler(back_conv)
     app.add_handler(end_conv)
