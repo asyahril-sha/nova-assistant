@@ -24,6 +24,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 import sys
+from enum import Enum
 
 # Telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
