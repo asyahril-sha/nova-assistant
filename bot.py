@@ -2735,42 +2735,42 @@ def main():
     
     app = Application.builder().token(os.getenv("TELEGRAM_TOKEN")).build()
     
-    # Conversation handler untuk start - dengan per_message=True
-    start_conv = ConversationHandler(
-        entry_points=[CommandHandler('start', bot.start_command)],
-        states={
-            0: [CallbackQueryHandler(bot.start_pause_callback, pattern='^(unpause|new|cancel)$')],
-            SELECTING_ROLE: [CallbackQueryHandler(bot.role_callback, pattern='^role_')],
-        },
-        fallbacks=[CommandHandler('cancel', lambda u,c: ConversationHandler.END)],
-        per_message=True,  # Tambahkan ini
-        per_user=True,
-        per_chat=True
-    )
-    
-    # Conversation handler untuk back
-    back_conv = ConversationHandler(
-        entry_points=[CommandHandler('back', bot.back_command)],
-        states={
-            1: [MessageHandler(filters.TEXT & ~filters.COMMAND, bot.back_number_handler)],
-        },
-        fallbacks=[CommandHandler('cancel', lambda u,c: ConversationHandler.END)],
-        per_message=True,  # Tambahkan ini
-        per_user=True,
-        per_chat=True
-    )
-    
-    # Conversation handler untuk end
-    end_conv = ConversationHandler(
-        entry_points=[CommandHandler('end', bot.end_command), CommandHandler('close', bot.close_command)],
-        states={
-            CONFIRM_END: [CallbackQueryHandler(bot.end_callback, pattern='^end_')],
-        },
-        fallbacks=[CommandHandler('cancel', lambda u,c: ConversationHandler.END)],
-        per_message=True,  # Tambahkan ini
-        per_user=True,
-        per_chat=True
-    )
+    # Conversation handler untuk start
+start_conv = ConversationHandler(
+    entry_points=[CommandHandler('start', bot.start_command)],
+    states={
+        0: [CallbackQueryHandler(bot.start_pause_callback, pattern='^(unpause|new|cancel)$')],
+        SELECTING_ROLE: [CallbackQueryHandler(bot.role_callback, pattern='^role_')],
+    },
+    fallbacks=[CommandHandler('cancel', lambda u,c: ConversationHandler.END)],
+    per_message=False,  # ← UBAH
+    per_user=True,
+    per_chat=True
+)
+
+# Conversation handler untuk back
+back_conv = ConversationHandler(
+    entry_points=[CommandHandler('back', bot.back_command)],
+    states={
+        1: [MessageHandler(filters.TEXT & ~filters.COMMAND, bot.back_number_handler)],
+    },
+    fallbacks=[CommandHandler('cancel', lambda u,c: ConversationHandler.END)],
+    per_message=False,  # ← UBAH
+    per_user=True,
+    per_chat=True
+)
+
+# Conversation handler untuk end
+end_conv = ConversationHandler(
+    entry_points=[CommandHandler('end', bot.end_command), CommandHandler('close', bot.close_command)],
+    states={
+        CONFIRM_END: [CallbackQueryHandler(bot.end_callback, pattern='^end_')],
+    },
+    fallbacks=[CommandHandler('cancel', lambda u,c: ConversationHandler.END)],
+    per_message=False,  # ← UBAH
+    per_user=True,
+    per_chat=True
+)
     
     # Add handlers
     app.add_handler(start_conv)
