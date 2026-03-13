@@ -96,7 +96,14 @@ class Mood(Enum):
     NAKAL = "nakal"
     GENIT = "genit"
     SEDIH = "sedih"
-
+class SexPhase(Enum):
+    """Fase seksual untuk tracking"""
+    NONE = "none"
+    FOREPLAY = "foreplay"
+    PENETRATION = "penetrasi"
+    CLIMAX = "klimaks"
+    AFTERCARE = "aftercare"
+    
 class IntimacyStage(Enum):
     STRANGER = "stranger"        # Level 1-2
     INTRODUCTION = "introduction" # Level 3
@@ -537,7 +544,7 @@ class ShortTermMemory:
         self.current_mood = Mood.CHERIA
         self.arousal_level = 0.0
         self.wetness_level = 0.0
-        self.sex_phase = None
+        self.sex_phase = SexPhase.NONE
         
         self.dream_last = None
         self.last_thought = None
