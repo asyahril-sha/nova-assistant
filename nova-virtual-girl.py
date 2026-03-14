@@ -990,38 +990,37 @@ class GadisUltimateV57:
     
     # ---------- HANDLERS ----------
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Memulai hubungan baru dengan bot"""
-    user_id = update.effective_user.id
-    user_name = update.effective_user.first_name
+        """Memulai hubungan baru dengan bot"""
+        user_id = update.effective_user.id
     
-    # Cek apakah sudah ada sesi aktif
-    if user_id in self.sessions:
-        await update.message.reply_text(
-            "Kamu sudah memiliki sesi aktif. Ketik /close untuk menutup sesi atau /pause untuk jeda."
+        # Cek apakah sudah ada sesi aktif
+        if user_id in self.sessions:
+            await update.message.reply_text(
+                "Kamu sudah memiliki sesi aktif. Ketik /close untuk menutup sesi atau /pause untuk jeda."
+            )
+            return ConversationHandler.END
+    
+        # Cek apakah ada sesi di-pause
+        if user_id in self.paused_sessions:
+            keyboard = [
+                [InlineKeyboardButton("✅ Lanjutkan", callback_data="unpause")],
+                [InlineKeyboardButton("🆕 Mulai Baru", callback_data="new")],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text("⚠️ Ada sesi yang di-pause. Pilih:", reply_markup=reply_markup)
+            return 0
+    
+        # Tampilkan disclaimer 18+
+        disclaimer = (
+            "⚠️ **PERINGATAN DEWASA (18+)** ⚠️\n\n"
+            "Bot ini mengandung konten dewasa, termasuk dialog seksual eksplisit dan simulasi hubungan intim. "
+            "Dengan melanjutkan, Anda menyatakan bahwa Anda berusia 18 tahun ke atas dan setuju untuk menggunakan bot ini secara bertanggung jawab. "
+            "Konten ini hanya untuk hiburan pribadi."
         )
-        return ConversationHandler.END
-    
-    # Cek apakah ada sesi di-pause
-    if user_id in self.paused_sessions:
-        keyboard = [
-            [InlineKeyboardButton("✅ Lanjutkan", callback_data="unpause")],
-            [InlineKeyboardButton("🆕 Mulai Baru", callback_data="new")],
-        ]
+        keyboard = [[InlineKeyboardButton("✅ Saya setuju (18+)", callback_data="agree_18")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("⚠️ Ada sesi yang di-pause. Pilih:", reply_markup=reply_markup)
-        return 0
-    
-    # Tampilkan disclaimer 18+
-    disclaimer = (
-        "⚠️ **PERINGATAN DEWASA (18+)** ⚠️\n\n"
-        "Bot ini mengandung konten dewasa, termasuk dialog seksual eksplisit dan simulasi hubungan intim. "
-        "Dengan melanjutkan, Anda menyatakan bahwa Anda berusia 18 tahun ke atas dan setuju untuk menggunakan bot ini secara bertanggung jawab. "
-        "Konten ini hanya untuk hiburan pribadi."
-    )
-    keyboard = [[InlineKeyboardButton("✅ Saya setuju (18+)", callback_data="agree_18")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(disclaimer, reply_markup=reply_markup)
-    return SELECTING_ROLE
+        await update.message.reply_text(disclaimer, reply_markup=reply_markup)
+        return SELECTING_ROLE
     
     async def couple_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Memulai mode couple roleplay"""
