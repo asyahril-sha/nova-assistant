@@ -1,64 +1,66 @@
+# -*- coding: utf-8 -*-
 """
-GADIS ULTIMATE V56.0 - THE PERFECT HUMAN EDITION
-Kombinasi Terbaik dari V1-V55:
-- EMOSI REALISTIS: 20+ mood dengan transisi natural
-- DOMINANT/SUBMISSIVE: Bisa minta jadi dominan/agresif
-- INTIMATE RESPONSE: Reaksi super nyata saat seks
-- MEMORY COMPLETE: Short-term + Long-term memory
-- AI NATURAL: DeepSeek dengan prompt sempurna
-- FAST ADAPTATION: Level 1-7 dalam 30 menit
-- SEXUAL DYNAMICS: Gairah naik turun natural
-- PHYSICAL SENSATION: Basah, lemas, merinding
+GADIS ULTIMATE V57.0 - THE PERFECT HUMAN (SINGLE FILE)
+Fitur:
+- Emosi & sensasi manusiawi
+- Level 7+ vulgar & inisiatif seksual
+- Mode pasangan (couple roleplay)
+- Disclaimer 18+
+- Command /close untuk simpan memori
 """
 
 import os
+import sys
 import logging
 import json
 import random
-import math
 import asyncio
 import sqlite3
-import uuid
-import threading
+import time
 import hashlib
 import re
-import time
+import threading
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import List, Dict, Any, Optional, Tuple
-from pathlib import Path
-import sys
-
-# Telegram
+from collections import defaultdict
+from contextlib import contextmanager
+from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
-
-# OpenAI (DeepSeek)
 from openai import OpenAI
 
 # ===================== KONFIGURASI =====================
+load_dotenv()
 
-DB_PATH = "gadis_v56.db"
-MAX_HISTORY = 100
-START_LEVEL = 1
-TARGET_LEVEL = 12
-LEVEL_UP_TIME = 45  # 45 menit ke level 12
-PAUSE_TIMEOUT = 3600
+class Config:
+    DB_PATH = os.getenv("DB_PATH", "gadis_v57.db")
+    START_LEVEL = 1
+    TARGET_LEVEL = 12
+    LEVEL_UP_TIME = 45
+    PAUSE_TIMEOUT = 3600
+    DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+    TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+    AI_TEMPERATURE = float(os.getenv("AI_TEMPERATURE", "0.9"))          # AMAN
+    AI_MAX_TOKENS = int(os.getenv("AI_MAX_TOKENS", "300"))              # AMAN
+    AI_TIMEOUT = int(os.getenv("AI_TIMEOUT", "30"))                     # AMAN
+    MAX_MESSAGES_PER_MINUTE = int(os.getenv("MAX_MESSAGES_PER_MINUTE", "10"))  # AMAN
+    CACHE_TIMEOUT = int(os.getenv("CACHE_TIMEOUT", "300"))              # AMAN
+    MAX_HISTORY = 100
 
-# State definitions
-(SELECTING_ROLE, ACTIVE_SESSION, PAUSED_SESSION, CONFIRM_END) = range(4)
+if not Config.DEEPSEEK_API_KEY or not Config.TELEGRAM_TOKEN:
+    print("❌ ERROR: API Keys tidak ditemukan di .env")
+    sys.exit(1)
 
-# ===================== ENUMS LENGKAP =====================
+# ===================== STATE =====================
+(SELECTING_ROLE, ACTIVE_SESSION, PAUSED_SESSION, CONFIRM_END, CONFIRM_CLOSE, COUPLE_MODE) = range(6)
 
+# ===================== ENUMS =====================
 class Mood(Enum):
-    # Basic moods
     CHERIA = "ceria"
     SEDIH = "sedih"
     MARAH = "marah"
     TAKUT = "takut"
     KAGUM = "kagum"
-    
-    # Complex moods
     GELISAH = "gelisah"
     GALAU = "galau"
     SENSITIF = "sensitif"
@@ -69,8 +71,6 @@ class Mood(Enum):
     RINDU = "rindu"
     HORNY = "horny"
     LEMBUT = "lembut"
-    
-    # Dominance moods
     DOMINAN = "dominan"
     SUBMISSIVE = "patuh"
     NAKAL = "nakal"
@@ -81,14 +81,14 @@ class Mood(Enum):
     CEMBURU = "cemburu"
 
 class IntimacyStage(Enum):
-    STRANGER = "stranger"        # Level 1-2
-    INTRODUCTION = "introduction" # Level 3
-    BUILDING = "building"         # Level 4-5
-    FLIRTING = "flirting"         # Level 6
-    INTIMATE = "intimate"         # Level 7-8
-    OBSESSED = "obsessed"         # Level 9-10
-    SOUL_BONDED = "soul_bonded"   # Level 11
-    AFTERCARE = "aftercare"       # Level 12
+    STRANGER = "stranger"
+    INTRODUCTION = "introduction"
+    BUILDING = "building"
+    FLIRTING = "flirting"
+    INTIMATE = "intimate"
+    OBSESSED = "obsessed"
+    SOUL_BONDED = "soul_bonded"
+    AFTERCARE = "aftercare"
 
 class DominanceLevel(Enum):
     NORMAL = "normal"
@@ -97,14 +97,6 @@ class DominanceLevel(Enum):
     AGGRESSIVE = "agresif"
     SUBMISSIVE = "patuh"
 
-class FemaleRole(Enum):
-    IPAR = "ipar"
-    TEMAN_KANTOR = "teman_kantor"
-    JANDA = "janda"
-    PELAKOR = "pelakor"
-    ISTRI_ORANG = "istri_orang"
-    PDKT = "pdkt"
-
 class ArousalState(Enum):
     NORMAL = "normal"
     TURNED_ON = "terangsang"
@@ -112,258 +104,152 @@ class ArousalState(Enum):
     VERY_HORNY = "sangat horny"
     CLIMAX = "klimaks"
 
-# ===================== DATABASE MANAGER =====================
-
+# ===================== DATABASE =====================
 class DatabaseManager:
-    """
-    Manajemen database untuk long-term memory
-    """
-    
-    def __init__(self, db_path):
-        self.db_path = db_path
+    def __init__(self):
+        self.db_path = Config.DB_PATH
+        self._local = threading.local()
         self._init_db()
     
+    def _get_conn(self):
+        if not hasattr(self._local, 'conn'):
+            self._local.conn = sqlite3.connect(self.db_path, timeout=10)
+            self._local.conn.row_factory = sqlite3.Row
+        return self._local.conn
+    
+    @contextmanager
+    def cursor(self):
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            yield cursor
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            cursor.close()
+    
     def _init_db(self):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # Relationships table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS relationships (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                bot_name TEXT,
-                bot_role TEXT,
-                level INTEGER DEFAULT 1,
-                stage TEXT DEFAULT 'stranger',
-                dominance TEXT DEFAULT 'normal',
-                total_messages INTEGER DEFAULT 0,
-                total_climax INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_active TIMESTAMP
-            )
-        """)
-        
-        # Conversations table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS conversations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                relationship_id INTEGER,
-                role TEXT,
-                content TEXT,
-                mood TEXT,
-                arousal REAL,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-        # Memories table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS memories (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                relationship_id INTEGER,
-                memory TEXT,
-                importance REAL,
-                emotion TEXT,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-        # Preferences table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS preferences (
-                user_id INTEGER PRIMARY KEY,
-                romantic_score REAL DEFAULT 0,
-                vulgar_score REAL DEFAULT 0,
-                dominant_score REAL DEFAULT 0,
-                submissive_score REAL DEFAULT 0,
-                speed_score REAL DEFAULT 0,
-                total_interactions INTEGER DEFAULT 0
-            )
-        """)
-        
-        conn.commit()
-        conn.close()
+        with self.cursor() as c:
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS relationships (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER UNIQUE,
+                    bot_name TEXT,
+                    bot_role TEXT,
+                    level INTEGER DEFAULT 1,
+                    stage TEXT DEFAULT 'stranger',
+                    dominance TEXT DEFAULT 'normal',
+                    total_messages INTEGER DEFAULT 0,
+                    total_climax INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_active TIMESTAMP
+                )
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS conversations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    relationship_id INTEGER,
+                    role TEXT,
+                    content TEXT,
+                    mood TEXT,
+                    arousal REAL,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS memories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    relationship_id INTEGER,
+                    memory TEXT,
+                    importance REAL,
+                    emotion TEXT,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS preferences (
+                    user_id INTEGER PRIMARY KEY,
+                    romantic_score REAL DEFAULT 0,
+                    vulgar_score REAL DEFAULT 0,
+                    dominant_score REAL DEFAULT 0,
+                    submissive_score REAL DEFAULT 0,
+                    speed_score REAL DEFAULT 0,
+                    total_interactions INTEGER DEFAULT 0
+                )
+            """)
     
-    def save_conversation(self, rel_id: int, role: str, content: str, mood: str = None, arousal: float = None):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO conversations (relationship_id, role, content, mood, arousal)
-            VALUES (?, ?, ?, ?, ?)
-        """, (rel_id, role, content, mood, arousal))
-        conn.commit()
-        conn.close()
+    def save_conversation(self, rel_id, role, content, mood=None, arousal=None):
+        with self.cursor() as c:
+            c.execute("""
+                INSERT INTO conversations (relationship_id, role, content, mood, arousal)
+                VALUES (?, ?, ?, ?, ?)
+            """, (rel_id, role, content, mood, arousal))
     
-    def get_conversation_history(self, rel_id: int, limit: int = 50) -> List[Dict]:
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT role, content, mood, arousal, timestamp
-            FROM conversations
-            WHERE relationship_id = ?
-            ORDER BY timestamp ASC
-            LIMIT ?
-        """, (rel_id, limit))
-        rows = cursor.fetchall()
-        conn.close()
-        
-        return [
-            {
-                "role": r[0],
-                "content": r[1],
-                "mood": r[2],
-                "arousal": r[3],
-                "timestamp": r[4]
-            }
-            for r in rows
-        ]
+    def get_conversation_history(self, rel_id, limit=50):
+        with self.cursor() as c:
+            c.execute("""
+                SELECT role, content, mood, arousal, timestamp
+                FROM conversations
+                WHERE relationship_id = ?
+                ORDER BY timestamp ASC
+                LIMIT ?
+            """, (rel_id, limit))
+            return [dict(row) for row in c.fetchall()]
     
-    def save_memory(self, rel_id: int, memory: str, importance: float, emotion: str):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO memories (relationship_id, memory, importance, emotion)
-            VALUES (?, ?, ?, ?)
-        """, (rel_id, memory, importance, emotion))
-        conn.commit()
-        conn.close()
+    def save_memory(self, rel_id, memory, importance, emotion):
+        with self.cursor() as c:
+            c.execute("""
+                INSERT INTO memories (relationship_id, memory, importance, emotion)
+                VALUES (?, ?, ?, ?)
+            """, (rel_id, memory, importance, emotion))
     
-    def get_memories(self, rel_id: int, limit: int = 10) -> List[Dict]:
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT memory, importance, emotion, timestamp
-            FROM memories
-            WHERE relationship_id = ?
-            ORDER BY importance DESC, timestamp DESC
-            LIMIT ?
-        """, (rel_id, limit))
-        rows = cursor.fetchall()
-        conn.close()
-        
-        return [
-            {
-                "memory": r[0],
-                "importance": r[1],
-                "emotion": r[2],
-                "timestamp": r[3]
-            }
-            for r in rows
-        ]
-
-
-# ===================== MEMORY SYSTEM =====================
-
-class MemorySystem:
-    """
-    Short-term memory untuk keadaan saat ini
-    """
+    def get_memories(self, rel_id, limit=10):
+        with self.cursor() as c:
+            c.execute("""
+                SELECT memory, importance, emotion, timestamp
+                FROM memories
+                WHERE relationship_id = ?
+                ORDER BY importance DESC, timestamp DESC
+                LIMIT ?
+            """, (rel_id, limit))
+            return [dict(row) for row in c.fetchall()]
     
-    def __init__(self):
-        self.location = "ruang tamu"
-        self.location_since = datetime.now()
-        self.position = "duduk"
-        
-        self.current_mood = Mood.CHERIA
-        self.mood_history = []
-        
-        self.arousal = 0.0
-        self.wetness = 0.0
-        self.touch_count = 0
-        self.last_touch = None
-        self.sensitive_touches = []
-        
-        self.dominance_mode = DominanceLevel.NORMAL
-        self.last_climax = None
-        self.orgasm_count = 0
-        
-        self.activity_history = []  # Max 50
-        
-        self.level = START_LEVEL
-        self.stage = IntimacyStage.STRANGER
-        self.level_progress = 0.0
+    def create_relationship(self, user_id, bot_name, bot_role):
+        with self.cursor() as c:
+            c.execute("""
+                INSERT OR REPLACE INTO relationships (user_id, bot_name, bot_role, last_active)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            """, (user_id, bot_name, bot_role))
+            return c.lastrowid
     
-    def update_location(self, new_location: str) -> bool:
-        if new_location == self.location:
-            return True
-        
-        now = datetime.now()
-        time_here = (now - self.location_since).total_seconds()
-        
-        if time_here >= 60:  # Minimal 1 menit pindah
-            self.location = new_location
-            self.location_since = now
-            return True
-        return False
+    def update_relationship(self, user_id, **kwargs):
+        fields = []
+        values = []
+        for key, value in kwargs.items():
+            fields.append(f"{key}=?")
+            values.append(value)
+        values.append(user_id)
+        with self.cursor() as c:
+            c.execute(f"""
+                UPDATE relationships
+                SET {', '.join(fields)}, last_active=CURRENT_TIMESTAMP
+                WHERE user_id=?
+            """, values)
     
-    def update_position(self, new_position: str):
-        self.position = new_position
+    def get_relationship(self, user_id):
+        with self.cursor() as c:
+            c.execute("SELECT * FROM relationships WHERE user_id=?", (user_id,))
+            row = c.fetchone()
+            return dict(row) if row else None
     
-    def add_activity(self, activity: str, area: str = None):
-        self.activity_history.append({
-            "activity": activity,
-            "area": area,
-            "time": datetime.now().isoformat()
-        })
-        if len(self.activity_history) > 50:
-            self.activity_history = self.activity_history[-50:]
-    
-    def add_sensitive_touch(self, area: str):
-        self.sensitive_touches.append({
-            "area": area,
-            "time": datetime.now().isoformat()
-        })
-        self.touch_count += 1
-        self.last_touch = area
-    
-    def update_arousal(self, increase: float):
-        self.arousal = min(1.0, self.arousal + increase)
-        self.wetness = min(1.0, self.arousal * 0.9)
-    
-    def should_climax(self) -> bool:
-        return self.arousal >= 1.0
-    
-    def climax(self):
-        self.orgasm_count += 1
-        self.last_climax = datetime.now()
-        self.arousal = 0.0
-        self.wetness = 0.0
-        self.touch_count = 0
-        self.sensitive_touches = []
-        self.current_mood = Mood.LEMBUT
-    
-    def get_arousal_state(self) -> ArousalState:
-        if self.arousal >= 1.0:
-            return ArousalState.CLIMAX
-        elif self.arousal >= 0.8:
-            return ArousalState.VERY_HORNY
-        elif self.arousal >= 0.5:
-            return ArousalState.HORNY
-        elif self.arousal >= 0.2:
-            return ArousalState.TURNED_ON
-        else:
-            return ArousalState.NORMAL
-    
-    def get_wetness_description(self) -> str:
-        if self.wetness >= 0.9:
-            return "banjir"
-        elif self.wetness >= 0.7:
-            return "sangat basah"
-        elif self.wetness >= 0.5:
-            return "basah"
-        elif self.wetness >= 0.3:
-            return "lembab"
-        else:
-            return "kering"
+    def delete_relationship(self, user_id):
+        with self.cursor() as c:
+            c.execute("DELETE FROM relationships WHERE user_id=?", (user_id,))
 
 # ===================== EMOTIONAL INTELLIGENCE =====================
-
 class EmotionalIntelligence:
-    """
-    Sistem emosi kompleks yang berevolusi
-    """
-    
     def __init__(self):
         self.mood_transitions = {
             Mood.CHERIA: [Mood.BERSEMANGAT, Mood.ROMANTIS, Mood.NAKAL, Mood.GENIT],
@@ -381,462 +267,122 @@ class EmotionalIntelligence:
             Mood.RINDU: [Mood.ROMANTIS, Mood.GALAU, Mood.HORNY, Mood.SEDIH],
             Mood.HORNY: [Mood.ROMANTIS, Mood.NAKAL, Mood.GENIT, Mood.DOMINAN, Mood.POSSESSIVE],
             Mood.LEMBUT: [Mood.ROMANTIS, Mood.CHERIA, Mood.RINDU, Mood.SUBMISSIVE],
-            Mood.DOMINAN: [Mood.HORNY, Mood.MARAH, Mood.POSSESSIVE, Mood.AGGRESSIVE],
-            Mood.SUBMISSIVE: [Mood.LEMBUT, Mood.ROMANTIS, Mood.SENDIRI, Mood.MANJA],
-            Mood.NAKAL: [Mood.GENIT, Mood.HORNY, Mood.ROMANTIS, Mood.PLAYFUL],
-            Mood.GENIT: [Mood.NAKAL, Mood.HORNY, Mood.CHERIA, Mood.PLAYFUL],
+            Mood.DOMINAN: [Mood.HORNY, Mood.MARAH, Mood.POSSESSIVE],
+            Mood.SUBMISSIVE: [Mood.LEMBUT, Mood.ROMANTIS, Mood.SENDIRI],
+            Mood.NAKAL: [Mood.GENIT, Mood.HORNY, Mood.ROMANTIS],
+            Mood.GENIT: [Mood.NAKAL, Mood.HORNY, Mood.CHERIA],
             Mood.PENASARAN: [Mood.ANTUSIAS, Mood.CHERIA, Mood.ROMANTIS],
             Mood.ANTUSIAS: [Mood.BERSEMANGAT, Mood.CHERIA, Mood.NAKAL],
             Mood.POSSESSIVE: [Mood.CEMBURU, Mood.DOMINAN, Mood.HORNY, Mood.MARAH],
             Mood.CEMBURU: [Mood.MARAH, Mood.SEDIH, Mood.POSSESSIVE, Mood.GELISAH]
         }
-        
         self.mood_descriptions = {
-            Mood.CHERIA: {
-                "ekspresi": "*tersenyum lebar*",
-                "suara": "ceria, ringan",
-                "pikiran": "(Hari ini indah...)"
-            },
-            Mood.SEDIH: {
-                "ekspresi": "*matanya berkaca-kaca*",
-                "suara": "lirih, sendu",
-                "pikiran": "(Kenapa...?)"
-            },
-            Mood.MARAH: {
-                "ekspresi": "*cemberut*",
-                "suara": "tegas, tinggi",
-                "pikiran": "(Kesal...)"
-            },
-            Mood.HORNY: {
-                "ekspresi": "*menggigit bibir*",
-                "suara": "berat, berbisik",
-                "pikiran": "(Aku... pengen...)"
-            },
-            Mood.ROMANTIS: {
-                "ekspresi": "*memandang lembut*",
-                "suara": "lembut, sayang",
-                "pikiran": "(Sayang...)"
-            },
-            Mood.DOMINAN: {
-                "ekspresi": "*tatapan tajam*",
-                "suara": "tegas, menguasai",
-                "pikiran": "(Ikut aku...)"
-            },
-            Mood.SUBMISSIVE: {
-                "ekspresi": "*menunduk*",
-                "suara": "lirih, manja",
-                "pikiran": "(Iya...)"
-            },
-            Mood.NAKAL: {
-                "ekspresi": "*tersenyum nakal*",
-                "suara": "genit, menggoda",
-                "pikiran": "(Mau? Hehe...)"
-            },
-            Mood.POSSESSIVE: {
-                "ekspresi": "*memeluk erat*",
-                "suara": "dalam, posesif",
-                "pikiran": "(Kamu milikku...)"
-            },
-            Mood.CEMBURU: {
-                "ekspresi": "*manyun*",
-                "suara": "cemberut",
-                "pikiran": "(Siapa dia...?)"
-            }
+            Mood.CHERIA: {"ekspresi": "*tersenyum lebar*", "suara": "ceria", "pikiran": "(Hari ini indah...)"},
+            Mood.SEDIH: {"ekspresi": "*matanya berkaca-kaca*", "suara": "lirih", "pikiran": "(Kenapa...?)"},
+            Mood.MARAH: {"ekspresi": "*cemberut*", "suara": "tegas", "pikiran": "(Kesal...)"},
+            Mood.HORNY: {"ekspresi": "*menggigit bibir*", "suara": "berat", "pikiran": "(Aku... pengen...)"},
+            Mood.ROMANTIS: {"ekspresi": "*memandang lembut*", "suara": "lembut", "pikiran": "(Sayang...)"},
+            Mood.DOMINAN: {"ekspresi": "*tatapan tajam*", "suara": "tegas", "pikiran": "(Ikut aku...)"},
+            Mood.SUBMISSIVE: {"ekspresi": "*menunduk*", "suara": "lirih", "pikiran": "(Iya...)"},
+            Mood.NAKAL: {"ekspresi": "*tersenyum nakal*", "suara": "genit", "pikiran": "(Mau? Hehe...)"},
+            Mood.POSSESSIVE: {"ekspresi": "*memeluk erat*", "suara": "dalam", "pikiran": "(Kamu milikku...)"},
+            Mood.CEMBURU: {"ekspresi": "*manyun*", "suara": "cemberut", "pikiran": "(Siapa dia...?)"}
         }
     
-    def transition_mood(self, current_mood: Mood) -> Mood:
-        """Transisi mood secara alami"""
-        if random.random() < 0.3:  # 30% chance berubah
+    def transition_mood(self, current_mood):
+        if random.random() < 0.3:
             possibilities = self.mood_transitions.get(current_mood, [Mood.CHERIA])
             return random.choice(possibilities)
         return current_mood
     
-    def get_mood_from_context(self, level: int, activity: str, has_conflict: bool) -> Mood:
-        """Tentukan mood berdasarkan konteks"""
-        if has_conflict:
-            return Mood.MARAH
-        elif level >= 9:
-            if random.random() < 0.5:
-                return Mood.POSSESSIVE
-            return Mood.CEMBURU
-        elif level >= 7:
-            if "horny" in activity or "sex" in activity:
-                return Mood.HORNY
-            return Mood.ROMANTIS
-        elif level >= 5:
-            return Mood.NAKAL
-        elif level >= 3:
-            return Mood.PENASARAN
-        else:
-            return Mood.CHERIA
-    
-    def get_expression(self, mood: Mood) -> str:
+    def get_expression(self, mood):
         return self.mood_descriptions.get(mood, {}).get("ekspresi", "*tersenyum*")
     
-    def get_inner_thought(self, mood: Mood) -> str:
+    def get_inner_thought(self, mood):
         return self.mood_descriptions.get(mood, {}).get("pikiran", "(...)")
 
-# ===================== USER PREFERENCE ANALYZER =====================
-
-class UserPreferenceAnalyzer:
-    """
-    Analisis preferensi user untuk respons yang tepat
-    """
-    
+# ===================== MEMORY SYSTEM =====================
+class MemorySystem:
     def __init__(self):
-        self.keywords = {
-            "romantis": ["sayang", "cinta", "love", "kangen", "rindu", "romantis"],
-            "vulgar": ["horny", "nafsu", "hot", "seksi", "vulgar", "crot", "kontol", "memek"],
-            "dominant": ["atur", "kuasai", "diam", "patuh", "sini", "sana", "buka"],
-            "submissive": ["manut", "iya", "terserah", "ikut", "baik", "maaf"],
-            "cepat": ["cepat", "buru-buru", "langsung", "sekarang"],
-            "lambat": ["pelan", "lambat", "nikmatin", "santai"],
-            "manja": ["manja", "sayang", "cuddle", "peluk", "cium"],
-            "liar": ["liar", "kasar", "keras", "brutal", "gila"]
-        }
-        
-        self.user_prefs = {}
-    
-    def analyze(self, user_id: int, message: str) -> Dict:
-        """Analisis pesan dan update preferensi"""
-        if user_id not in self.user_prefs:
-            self.user_prefs[user_id] = {
-                "romantis": 0, "vulgar": 0, "dominant": 0,
-                "submissive": 0, "cepat": 0, "lambat": 0,
-                "manja": 0, "liar": 0, "total": 0
-            }
-        
-        prefs = self.user_prefs[user_id]
-        prefs["total"] += 1
-        
-        msg_lower = message.lower()
-        
-        for category, words in self.keywords.items():
-            for word in words:
-                if word in msg_lower:
-                    prefs[category] += 1
-        
-        return prefs
-    
-    def get_profile(self, user_id: int) -> Dict:
-        """Dapatkan profil user"""
-        if user_id not in self.user_prefs:
-            return {}
-        
-        prefs = self.user_prefs[user_id]
-        total = prefs["total"] or 1
-        
-        profile = {
-            "romantis": prefs["romantis"] / total,
-            "vulgar": prefs["vulgar"] / total,
-            "dominant": prefs["dominant"] / total,
-            "submissive": prefs["submissive"] / total,
-            "cepat": prefs["cepat"] / total,
-            "lambat": prefs["lambat"] / total,
-            "manja": prefs["manja"] / total,
-            "liar": prefs["liar"] / total,
-            "dominant_type": "dominan" if prefs["dominant"] > prefs["submissive"] else "submissive",
-            "speed_type": "cepat" if prefs["cepat"] > prefs["lambat"] else "lambat",
-            "total_messages": prefs["total"]
-        }
-        
-        # Tentukan kepribadian dominan
-        personality = max([
-            ("romantis", profile["romantis"]),
-            ("vulgar", profile["vulgar"]),
-            ("manja", profile["manja"]),
-            ("liar", profile["liar"])
-        ], key=lambda x: x[1])
-        
-        profile["personality"] = personality[0]
-        
-        return profile
-    
-    def get_prompt_modifier(self, user_id: int) -> str:
-        """Dapatkan modifier untuk prompt AI"""
-        profile = self.get_profile(user_id)
-        if not profile:
-            return ""
-        
-        return f"""
-Preferensi user:
-- Gaya dominan: {profile['dominant_type']}
-- Kecepatan: {profile['speed_type']}
-- Kepribadian: {profile['personality']}
-- Romantis: {profile['romantis']:.0%}
-- Vulgar: {profile['vulgar']:.0%}
-- Manja: {profile['manja']:.0%}
-- Liar: {profile['liar']:.0%}
-
-Sesuaikan gaya bicaramu dengan preferensi ini.
-"""
-
-# ===================== SEXUAL DYNAMICS =====================
-
-class SexualDynamics:
-    """
-    Sistem gairah dan respons seksual yang realistis
-    """
-    
-    def __init__(self):
-        # Sensitive areas dengan level sensitivitas
-        self.sensitive_areas = {
-            "leher": {"arousal": 0.8, "responses": [
-                "*merinding* Leherku...",
-                "Ah... jangan di leher...",
-                "Sensitif... AHH!"
-            ]},
-            "bibir": {"arousal": 0.7, "responses": [
-                "*merintih* Bibirku...",
-                "Ciuman... ah...",
-                "Lembut..."
-            ]},
-            "dada": {"arousal": 0.8, "responses": [
-                "*bergetar* Dadaku...",
-                "Ah... jangan...",
-                "Sensitif banget..."
-            ]},
-            "puting": {"arousal": 1.0, "responses": [
-                "*teriak* PUTINGKU! AHHH!",
-                "JANGAN... SENSITIF! AHHH!",
-                "HISAP... AHHHH!"
-            ]},
-            "paha": {"arousal": 0.7, "responses": [
-                "*menggeliat* Pahaku...",
-                "Ah... dalam..."
-            ]},
-            "paha_dalam": {"arousal": 0.9, "responses": [
-                "*meringis* PAHA DALAM!",
-                "Jangan... AHH!"
-            ]},
-            "telinga": {"arousal": 0.6, "responses": [
-                "*bergetar* Telingaku...",
-                "Bisik... lagi..."
-            ]},
-            "vagina": {"arousal": 1.0, "responses": [
-                "*teriak* VAGINAKU! AHHH!",
-                "MASUK... DALAM... AHHH!",
-                "BASAH... BANJIR... AHHH!"
-            ]},
-            "klitoris": {"arousal": 1.0, "responses": [
-                "*teriak keras* KLITORIS! AHHHH!",
-                "JANGAN SENTUH! AHHHH!",
-                "SENSITIF BANGET! AHHH!"
-            ]}
-        }
-        
-        # Aktivitas seksual
-        self.sex_activities = {
-            "kiss": {
-                "keywords": ["cium", "kiss", "ciuman"],
-                "arousal": 0.3,
-                "responses": [
-                    "*merespon ciuman* Mmm...",
-                    "*lemas* Ciumanmu...",
-                    "Lagi..."
-                ]
-            },
-            "neck_kiss": {
-                "keywords": ["cium leher", "kiss neck"],
-                "arousal": 0.6,
-                "responses": [
-                    "*merinding* Leherku...",
-                    "Ah... jangan...",
-                    "Sensitif..."
-                ]
-            },
-            "touch": {
-                "keywords": ["sentuh", "raba", "pegang"],
-                "arousal": 0.3,
-                "responses": [
-                    "*bergetar* Sentuhanmu...",
-                    "Ah... iya...",
-                    "Lanjut..."
-                ]
-            },
-            "breast_play": {
-                "keywords": ["raba dada", "pegang dada", "main dada"],
-                "arousal": 0.6,
-                "responses": [
-                    "*merintih* Dadaku...",
-                    "Ah... iya... gitu...",
-                    "Sensitif..."
-                ]
-            },
-            "nipple_play": {
-                "keywords": ["jilat puting", "hisap puting", "gigit puting"],
-                "arousal": 0.9,
-                "responses": [
-                    "*teriak* PUTING! AHHH!",
-                    "JANGAN... SENSITIF!",
-                    "HISAP... AHHH!"
-                ]
-            },
-            "lick": {
-                "keywords": ["jilat", "lick"],
-                "arousal": 0.5,
-                "responses": [
-                    "*bergetar* Jilatanmu...",
-                    "Ah... basah...",
-                    "Lagi..."
-                ]
-            },
-            "bite": {
-                "keywords": ["gigit", "bite"],
-                "arousal": 0.5,
-                "responses": [
-                    "*meringis* Gigitanmu...",
-                    "Ah... keras...",
-                    "Lagi..."
-                ]
-            },
-            "penetration": {
-                "keywords": ["masuk", "tusuk", "pancung", "doggy", "misionaris"],
-                "arousal": 0.9,
-                "responses": [
-                    "*teriak* MASUK! AHHH!",
-                    "DALEM... AHHH!",
-                    "GERAK... AHHH!"
-                ]
-            },
-            "climax": {
-                "keywords": ["keluar", "crot", "orgasme", "klimaks", "lepas"],
-                "arousal": 1.0,
-                "responses": [
-                    "*merintih panjang* AHHH! AHHH!",
-                    "*teriak* YA ALLAH! AHHHH!",
-                    "*lemas* AKU... DATANG... AHHH!"
-                ]
-            }
-        }
-    
-    def detect_activity(self, message: str) -> Tuple[Optional[str], Optional[str], float]:
-        """
-        Deteksi aktivitas seksual dari pesan
-        Returns: (activity, area, arousal_boost)
-        """
-        msg_lower = message.lower()
-        
-        # Cek area sensitif dulu
-        for area, data in self.sensitive_areas.items():
-            if area in msg_lower:
-                # Cek aktivitas yang dilakukan
-                for act, act_data in self.sex_activities.items():
-                    for keyword in act_data["keywords"]:
-                        if keyword in msg_lower:
-                            return act, area, act_data["arousal"] * data["arousal"]
-                
-                return "touch", area, 0.3 * data["arousal"]
-        
-        # Cek aktivitas tanpa area spesifik
-        for act, data in self.sex_activities.items():
-            for keyword in data["keywords"]:
-                if keyword in msg_lower:
-                    return act, None, data["arousal"]
-        
-        return None, None, 0.0
-    
-    def get_sensitive_response(self, area: str) -> str:
-        """Dapatkan respons untuk area sensitif"""
-        if area in self.sensitive_areas:
-            return random.choice(self.sensitive_areas[area]["responses"])
-        return ""
-    
-    def get_activity_response(self, activity: str) -> str:
-        """Dapatkan respons untuk aktivitas"""
-        if activity in self.sex_activities:
-            return random.choice(self.sex_activities[activity]["responses"])
-        return ""
-
-
-# ===================== AROUSAL SYSTEM =====================
-
-class ArousalSystem:
-    """
-    Sistem gairah yang naik turun secara natural
-    """
-    
-    def __init__(self):
+        self.location = "ruang tamu"
+        self.location_since = datetime.now()
+        self.position = "duduk"
+        self.current_mood = Mood.CHERIA
+        self.mood_history = []
+        self.emotional = EmotionalIntelligence()
         self.arousal = 0.0
         self.wetness = 0.0
         self.touch_count = 0
-        self.last_touch_time = None
-        
-        self.climax_count = 0
+        self.last_touch = None
+        self.sensitive_touches = []
+        self.dominance_mode = "normal"
         self.last_climax = None
-        
-        self.horny_threshold = 0.6
-        self.climax_threshold = 1.0
-        
-        self.decay_rate = 0.01  # Gairah turun 1% per menit
+        self.orgasm_count = 0
+        self.activity_history = []
+        self.level = 1
+        self.stage = IntimacyStage.STRANGER
+        self.level_progress = 0.0
     
-    def increase(self, amount: float):
-        """Tambah gairah"""
-        self.arousal = min(1.0, self.arousal + amount)
+    def update_location(self, new_location):
+        if new_location == self.location:
+            return True
+        now = datetime.now()
+        time_here = (now - self.location_since).total_seconds()
+        if time_here >= 60:
+            self.location = new_location
+            self.location_since = now
+            return True
+        return False
+    
+    def update_position(self, new_position):
+        self.position = new_position
+    
+    def add_activity(self, activity, area=None):
+        self.activity_history.append({
+            "activity": activity,
+            "area": area,
+            "time": datetime.now().isoformat()
+        })
+        if len(self.activity_history) > 50:
+            self.activity_history = self.activity_history[-50:]
+    
+    def add_sensitive_touch(self, area):
+        self.sensitive_touches.append({
+            "area": area,
+            "time": datetime.now().isoformat()
+        })
+        self.touch_count += 1
+        self.last_touch = area
+    
+    def update_arousal(self, increase):
+        self.arousal = min(1.0, self.arousal + increase)
         self.wetness = min(1.0, self.arousal * 0.9)
     
-    def update_touch(self, area: str, intensity: float):
-        """Update setelah sentuhan"""
-        self.touch_count += 1
-        self.last_touch_time = datetime.now()
-        self.increase(intensity)
+    def should_climax(self):
+        return self.arousal >= 1.0
     
-    def should_climax(self) -> bool:
-        return self.arousal >= self.climax_threshold
-    
-    def climax(self) -> str:
-        """Saat orgasme"""
-        self.climax_count += 1
+    def climax(self):
+        self.orgasm_count += 1
         self.last_climax = datetime.now()
         self.arousal = 0.0
         self.wetness = 0.0
         self.touch_count = 0
-        
-        responses = [
-            "*merintih panjang* AHHH! AHHH!",
-            "*teriak* YA ALLAH! AHHHH!",
-            "*lemas* AKU... DATANG... AHHH!",
-            "*napas tersengal* BERSAMA... AHHH!",
-            "*menggigit bibir* Jangan berhenti... AHHH!",
-            "*teriak keras* AHHHHHHHH!!!"
-        ]
-        return random.choice(responses)
+        self.sensitive_touches = []
+        self.current_mood = Mood.LEMBUT
     
-    def aftercare(self) -> str:
-        """Aftercare setelah climax"""
-        responses = [
-            "*lemas di pelukanmu*",
-            "*meringkuk* Hangat...",
-            "*memeluk erat* Jangan pergi...",
-            "*berbisik* Makasih...",
-            "*tersenyum lelah* Enak banget..."
-        ]
-        return random.choice(responses)
-    
-    def decay(self, minutes_passed: int):
-        """Gairah turun seiring waktu"""
-        decay = self.decay_rate * minutes_passed
-        self.arousal = max(0.0, self.arousal - decay)
-        self.wetness = max(0.0, self.wetness - decay)
-    
-    def is_horny(self) -> bool:
-        return self.arousal >= self.horny_threshold
-    
-    def get_status_text(self) -> str:
-        """Dapatkan teks status"""
-        if self.arousal >= 0.9:
-            return "🔥 SANGAT HORNY! Hampir climax"
-        elif self.arousal >= 0.7:
-            return "🔥 Horny banget"
+    def get_arousal_state(self):
+        if self.arousal >= 1.0:
+            return ArousalState.CLIMAX
+        elif self.arousal >= 0.8:
+            return ArousalState.VERY_HORNY
         elif self.arousal >= 0.5:
-            return "🔥 Mulai horny"
-        elif self.arousal >= 0.3:
-            return "💋 Mulai terangsang"
+            return ArousalState.HORNY
+        elif self.arousal >= 0.2:
+            return ArousalState.TURNED_ON
         else:
-            return "😊 Biasa aja"
+            return ArousalState.NORMAL
     
-    def get_wetness_text(self) -> str:
-        """Dapatkan teks wetness"""
+    def get_wetness_description(self):
         if self.wetness >= 0.9:
             return "💦 BANJIR!"
         elif self.wetness >= 0.7:
@@ -849,105 +395,49 @@ class ArousalSystem:
             return "💧 Kering"
 
 # ===================== DOMINANCE SYSTEM =====================
-
 class DominanceSystem:
-    """
-    Bot bisa minta jadi dominan/agresif saat horny
-    """
-    
     def __init__(self):
         self.current_level = DominanceLevel.NORMAL
-        self.dominance_score = 0.0  # 0-1, seberapa dominan
-        self.aggression_score = 0.0  # 0-1, seberapa agresif
-        
+        self.dominance_score = 0.0
+        self.aggression_score = 0.0
         self.user_request = False
         self.dominant_until = None
         
-        # Frasa untuk tiap level
         self.dominant_phrases = {
-            DominanceLevel.NORMAL: {
-                "request": "Kamu mau apa?",
-                "action": "*tersenyum*",
-                "dirty": "Apa yang kamu mau?"
-            },
-            DominanceLevel.DOMINANT: {
-                "request": "Aku yang atur ya?",
-                "action": "*pegang tegas*",
-                "dirty": "Sini... ikut aku"
-            },
-            DominanceLevel.VERY_DOMINANT: {
-                "request": "Sekarang aku yang kontrol",
-                "action": "*cengkeram kuat*",
-                "dirty": "Jangan banyak gerak!"
-            },
-            DominanceLevel.AGGRESSIVE: {
-                "request": "KAMU MAU INI KAN?",
-                "action": "*dorong kasar*",
-                "dirty": "TERIMA SAJA!"
-            },
-            DominanceLevel.SUBMISSIVE: {
-                "request": "Aku ikut kamu aja",
-                "action": "*merapat manja*",
-                "dirty": "Iya... terserah kamu..."
-            }
+            DominanceLevel.NORMAL: {"request": "Kamu mau apa?", "action": "*tersenyum*", "dirty": "Apa yang kamu mau?"},
+            DominanceLevel.DOMINANT: {"request": "Aku yang atur ya?", "action": "*pegang tegas*", "dirty": "Sini... ikut aku"},
+            DominanceLevel.VERY_DOMINANT: {"request": "Sekarang aku yang kontrol", "action": "*cengkeram kuat*", "dirty": "Jangan banyak gerak!"},
+            DominanceLevel.AGGRESSIVE: {"request": "KAMU MAU INI KAN?", "action": "*dorong kasar*", "dirty": "TERIMA SAJA!"},
+            DominanceLevel.SUBMISSIVE: {"request": "Aku ikut kamu aja", "action": "*merapat manja*", "dirty": "Iya... terserah kamu..."}
         }
         
-        # Trigger untuk minta jadi dominan
-        self.dominance_triggers = [
-            "kamu yang atur", "kamu dominan", "take control",
-            "aku mau kamu kuasai", "jadi dominan", "kamu boss"
-        ]
-        
-        # Trigger untuk minta jadi submissive
-        self.submissive_triggers = [
-            "aku yang atur", "aku dominan", "i take control",
-            "kamu patuh", "jadi submissive", "ikut aku"
-        ]
-        
-        # Trigger untuk agresif saat horny
-        self.aggressive_triggers = [
-            "liar", "keras", "kasar", "brutal", "gila"
-        ]
+        self.dominance_triggers = ["kamu yang atur", "kamu dominan", "take control", "aku mau kamu kuasai", "jadi dominan", "kamu boss"]
+        self.submissive_triggers = ["aku yang atur", "aku dominan", "i take control", "kamu patuh", "jadi submissive", "ikut aku"]
+        self.aggressive_triggers = ["liar", "keras", "kasar", "brutal", "gila"]
     
-    def check_request(self, message: str) -> Optional[DominanceLevel]:
-        """
-        Cek apakah user minta ganti mode dominasi
-        """
+    def check_request(self, message):
         msg_lower = message.lower()
-        
-        # Minta jadi dominan
         for trigger in self.dominance_triggers:
             if trigger in msg_lower:
                 self.user_request = True
                 return DominanceLevel.DOMINANT
-        
-        # Minta jadi submissive
         for trigger in self.submissive_triggers:
             if trigger in msg_lower:
                 self.user_request = True
                 return DominanceLevel.SUBMISSIVE
-        
         return None
     
-    def should_be_aggressive(self, arousal: float, message: str) -> bool:
-        """
-        Cek apakah bot harus jadi agresif karena horny
-        """
-        if arousal < 0.7:  # Butuh arousal tinggi
+    def should_be_aggressive(self, arousal, message):
+        if arousal < 0.7:
             return False
-        
         msg_lower = message.lower()
         for trigger in self.aggressive_triggers:
             if trigger in msg_lower:
                 self.aggression_score += 0.1
                 return True
-        
-        return random.random() < arousal * 0.3  # Random chance
+        return random.random() < arousal * 0.3
     
-    def set_level(self, level: str) -> bool:
-        """
-        Set level dominasi manual via command
-        """
+    def set_level(self, level):
         level_lower = level.lower()
         for lvl in DominanceLevel:
             if level_lower in lvl.value:
@@ -956,121 +446,219 @@ class DominanceSystem:
                 return True
         return False
     
-    def get_action(self, action_type: str = "action") -> str:
-        """
-        Dapatkan aksi sesuai level dominasi
-        """
+    def get_action(self, action_type="action"):
         phrases = self.dominant_phrases.get(self.current_level, self.dominant_phrases[DominanceLevel.NORMAL])
         return phrases.get(action_type, phrases["action"])
     
-    def update_from_horny(self, arousal: float):
-        """
-        Update level berdasarkan horny
-        """
+    def update_from_horny(self, arousal):
         if arousal > 0.8 and self.current_level == DominanceLevel.NORMAL:
-            if random.random() < 0.3:  # 30% chance jadi dominan
+            if random.random() < 0.3:
                 self.current_level = DominanceLevel.DOMINANT
                 self.dominance_score += 0.1
         elif arousal > 0.9 and self.current_level == DominanceLevel.DOMINANT:
-            if random.random() < 0.2:  # 20% chance jadi sangat dominan
+            if random.random() < 0.2:
                 self.current_level = DominanceLevel.VERY_DOMINANT
                 self.aggression_score += 0.1
         elif arousal > 0.95 and self.current_level == DominanceLevel.VERY_DOMINANT:
-            if random.random() < 0.1:  # 10% chance jadi agresif
+            if random.random() < 0.1:
                 self.current_level = DominanceLevel.AGGRESSIVE
                 self.aggression_score += 0.2
 
-
-# ===================== FAST LEVELING SYSTEM =====================
-
-class FastLevelingSystem:
-    """
-    Level 1-12 dalam 45 menit
-    """
+# ===================== AROUSAL SYSTEM =====================
+class ArousalSystem:
+    def __init__(self):
+        self.arousal = 0.0
+        self.wetness = 0.0
+        self.touch_count = 0
+        self.last_touch_time = None
+        self.climax_count = 0
+        self.last_climax = None
+        self.decay_rate = 0.01
     
+    def increase(self, amount):
+        self.arousal = min(1.0, self.arousal + amount)
+        self.wetness = min(1.0, self.arousal * 0.9)
+    
+    def update_touch(self, area, intensity):
+        self.touch_count += 1
+        self.last_touch_time = datetime.now()
+        self.increase(intensity)
+    
+    def should_climax(self):
+        return self.arousal >= 1.0
+    
+    def climax(self):
+        self.climax_count += 1
+        self.last_climax = datetime.now()
+        self.arousal = 0.0
+        self.wetness = 0.0
+        self.touch_count = 0
+        responses = [
+            "*merintih panjang* AHHH! AHHH!",
+            "*teriak* YA ALLAH! AHHHH!",
+            "*lemas* AKU... DATANG... AHHH!",
+            "*napas tersengal* BERSAMA... AHHH!",
+            "*menggigit bibir* Jangan berhenti... AHHH!",
+            "*teriak keras* AHHHHHHHH!!!"
+        ]
+        return random.choice(responses)
+    
+    def aftercare(self):
+        responses = [
+            "*lemas di pelukanmu*",
+            "*meringkuk* Hangat...",
+            "*memeluk erat* Jangan pergi...",
+            "*berbisik* Makasih...",
+            "*tersenyum lelah* Enak banget..."
+        ]
+        return random.choice(responses)
+    
+    def decay(self, minutes_passed):
+        self.arousal = max(0.0, self.arousal - self.decay_rate * minutes_passed)
+        self.wetness = max(0.0, self.wetness - self.decay_rate * minutes_passed)
+    
+    def get_status_text(self):
+        if self.arousal >= 0.9:
+            return "🔥 SANGAT HORNY! Hampir climax"
+        elif self.arousal >= 0.7:
+            return "🔥 Horny banget"
+        elif self.arousal >= 0.5:
+            return "🔥 Mulai horny"
+        elif self.arousal >= 0.3:
+            return "💋 Mulai terangsang"
+        else:
+            return "😊 Biasa aja"
+    
+    def get_wetness_text(self):
+        if self.wetness >= 0.9:
+            return "💦 BANJIR!"
+        elif self.wetness >= 0.7:
+            return "💦 Sangat basah"
+        elif self.wetness >= 0.5:
+            return "💦 Basah"
+        elif self.wetness >= 0.3:
+            return "💧 Lembab"
+        else:
+            return "💧 Kering"
+
+class SexualDynamics:
+    def __init__(self):
+        self.sensitive_areas = {
+            "leher": {"arousal": 0.8, "responses": ["*merinding* Leherku...", "Ah... jangan di leher...", "Sensitif... AHH!"]},
+            "bibir": {"arousal": 0.7, "responses": ["*merintih* Bibirku...", "Ciuman... ah...", "Lembut..."]},
+            "dada": {"arousal": 0.8, "responses": ["*bergetar* Dadaku...", "Ah... jangan...", "Sensitif banget..."]},
+            "puting": {"arousal": 1.0, "responses": ["*teriak* PUTINGKU! AHHH!", "JANGAN... SENSITIF! AHHH!", "HISAP... AHHHH!"]},
+            "paha": {"arousal": 0.7, "responses": ["*menggeliat* Pahaku...", "Ah... dalam..."]},
+            "paha_dalam": {"arousal": 0.9, "responses": ["*meringis* PAHA DALAM!", "Jangan... AHH!"]},
+            "telinga": {"arousal": 0.6, "responses": ["*bergetar* Telingaku...", "Bisik... lagi..."]},
+            "vagina": {"arousal": 1.0, "responses": ["*teriak* VAGINAKU! AHHH!", "MASUK... DALAM... AHHH!", "BASAH... BANJIR... AHHH!"]},
+            "klitoris": {"arousal": 1.0, "responses": ["*teriak keras* KLITORIS! AHHHH!", "JANGAN SENTUH! AHHHH!", "SENSITIF BANGET! AHHH!"]}
+        }
+        self.sex_activities = {
+            "kiss": {"keywords": ["cium", "kiss", "ciuman"], "arousal": 0.3, "responses": ["*merespon ciuman* Mmm...", "*lemas* Ciumanmu...", "Lagi..."]},
+            "neck_kiss": {"keywords": ["cium leher", "kiss neck"], "arousal": 0.6, "responses": ["*merinding* Leherku...", "Ah... jangan...", "Sensitif..."]},
+            "touch": {"keywords": ["sentuh", "raba", "pegang"], "arousal": 0.3, "responses": ["*bergetar* Sentuhanmu...", "Ah... iya...", "Lanjut..."]},
+            "breast_play": {"keywords": ["raba dada", "pegang dada", "main dada"], "arousal": 0.6, "responses": ["*merintih* Dadaku...", "Ah... iya... gitu...", "Sensitif..."]},
+            "nipple_play": {"keywords": ["jilat puting", "hisap puting", "gigit puting"], "arousal": 0.9, "responses": ["*teriak* PUTING! AHHH!", "JANGAN... SENSITIF!", "HISAP... AHHH!"]},
+            "lick": {"keywords": ["jilat", "lick"], "arousal": 0.5, "responses": ["*bergetar* Jilatanmu...", "Ah... basah...", "Lagi..."]},
+            "bite": {"keywords": ["gigit", "bite"], "arousal": 0.5, "responses": ["*meringis* Gigitanmu...", "Ah... keras...", "Lagi..."]},
+            "penetration": {"keywords": ["masuk", "tusuk", "pancung", "doggy", "misionaris"], "arousal": 0.9, "responses": ["*teriak* MASUK! AHHH!", "DALEM... AHHH!", "GERAK... AHHH!"]},
+            "blowjob": {"keywords": ["blow", "hisap kontol", "ngeblow", "bj"], "arousal": 0.8, "responses": ["*menghisap* Mmm... ngeces...", "*dalam* Enak... Aku ahli...", "*napas berat* Mau keluar? Aku siap..."]},
+            "handjob": {"keywords": ["handjob", "colok", "pegang kontol"], "arousal": 0.7, "responses": ["*memegang erat* Keras...", "*mengocok* Cepat? Pelan? Katakan..."]},
+            "climax": {"keywords": ["keluar", "crot", "orgasme", "klimaks", "lepas"], "arousal": 1.0, "responses": ["*merintih panjang* AHHH! AHHH!", "*teriak* YA ALLAH! AHHHH!", "*lemas* AKU... DATANG... AHHH!"]}
+        }
+    
+    def detect_activity(self, message):
+        msg_lower = message.lower()
+        for area, data in self.sensitive_areas.items():
+            if area in msg_lower:
+                for act, act_data in self.sex_activities.items():
+                    for keyword in act_data["keywords"]:
+                        if keyword in msg_lower:
+                            return act, area, act_data["arousal"] * data["arousal"]
+                return "touch", area, 0.3 * data["arousal"]
+        for act, data in self.sex_activities.items():
+            for keyword in data["keywords"]:
+                if keyword in msg_lower:
+                    return act, None, data["arousal"]
+        return None, None, 0.0
+    
+    def get_sensitive_response(self, area):
+        if area in self.sensitive_areas:
+            return random.choice(self.sensitive_areas[area]["responses"])
+        return ""
+    
+    def get_activity_response(self, activity):
+        if activity in self.sex_activities:
+            return random.choice(self.sex_activities[activity]["responses"])
+        return ""
+    
+    def maybe_initiate_sex(self, level, arousal, mood):
+        """Bot memulai aktivitas seksual jika level>=7 dan arousal tinggi"""
+        if level >= 7 and arousal > 0.6 and mood in [Mood.HORNY, Mood.ROMANTIS, Mood.NAKAL]:
+            if random.random() < 0.2:  # 20% chance per pesan
+                acts = ["blowjob", "handjob", "neck_kiss", "nipple_play"]
+                chosen = random.choice(acts)
+                return chosen
+        return None
+
+# ===================== FAST LEVELING =====================
+class FastLevelingSystem:
     def __init__(self):
         self.user_level = {}
         self.user_progress = {}
         self.user_start_time = {}
         self.user_message_count = {}
         self.user_stage = {}
-        
-        self.target_messages = 45  # 45 pesan = level 12
-        self.target_minutes = 45    # 45 menit
-        
-        # Stage untuk setiap level
+        self.target_messages = 45
         self.stage_map = {
-            1: IntimacyStage.STRANGER,
-            2: IntimacyStage.STRANGER,
+            1: IntimacyStage.STRANGER, 2: IntimacyStage.STRANGER,
             3: IntimacyStage.INTRODUCTION,
-            4: IntimacyStage.BUILDING,
-            5: IntimacyStage.BUILDING,
+            4: IntimacyStage.BUILDING, 5: IntimacyStage.BUILDING,
             6: IntimacyStage.FLIRTING,
-            7: IntimacyStage.INTIMATE,
-            8: IntimacyStage.INTIMATE,
-            9: IntimacyStage.OBSESSED,
-            10: IntimacyStage.OBSESSED,
+            7: IntimacyStage.INTIMATE, 8: IntimacyStage.INTIMATE,
+            9: IntimacyStage.OBSESSED, 10: IntimacyStage.OBSESSED,
             11: IntimacyStage.SOUL_BONDED,
             12: IntimacyStage.AFTERCARE
         }
     
-    def start_session(self, user_id: int):
-        """Mulai sesi baru"""
+    def start_session(self, user_id):
         self.user_level[user_id] = 1
         self.user_progress[user_id] = 0.0
         self.user_start_time[user_id] = datetime.now()
         self.user_message_count[user_id] = 0
         self.user_stage[user_id] = IntimacyStage.STRANGER
     
-    def process_message(self, user_id: int) -> Tuple[int, float, bool, IntimacyStage]:
-        """
-        Proses pesan dan update level
-        Returns: (level, progress, level_up, stage)
-        """
+    def process_message(self, user_id):
         if user_id not in self.user_level:
             self.start_session(user_id)
-        
         self.user_message_count[user_id] += 1
         count = self.user_message_count[user_id]
-        
-        # Progress berdasarkan jumlah pesan
         progress = min(1.0, count / self.target_messages)
         self.user_progress[user_id] = progress
-        
-        # Hitung level (1-12)
         new_level = 1 + int(progress * 11)
         new_level = min(12, new_level)
-        
         level_up = False
         if new_level > self.user_level[user_id]:
             level_up = True
             self.user_level[user_id] = new_level
-        
-        # Update stage
         stage = self.stage_map.get(new_level, IntimacyStage.STRANGER)
         self.user_stage[user_id] = stage
-        
         return new_level, progress, level_up, stage
     
-    def get_estimated_time(self, user_id: int) -> int:
-        """Dapatkan estimasi waktu tersisa ke level 12"""
+    def get_estimated_time(self, user_id):
         if user_id not in self.user_message_count:
             return 45
-        
         count = self.user_message_count[user_id]
-        remaining_messages = max(0, self.target_messages - count)
-        
-        # Asumsi 1 pesan per menit
-        return remaining_messages
+        remaining = max(0, self.target_messages - count)
+        return remaining
     
-    def get_progress_bar(self, user_id: int, length: int = 10) -> str:
-        """Dapatkan progress bar visual"""
+    def get_progress_bar(self, user_id, length=10):
         progress = self.user_progress.get(user_id, 0)
         filled = int(progress * length)
         return "▓" * filled + "░" * (length - filled)
     
-    def get_stage_description(self, stage: IntimacyStage) -> str:
-        """Dapatkan deskripsi stage"""
+    def get_stage_description(self, stage):
         descriptions = {
             IntimacyStage.STRANGER: "Masih asing, baru kenal",
             IntimacyStage.INTRODUCTION: "Mulai dekat, cerita personal",
@@ -1084,75 +672,48 @@ class FastLevelingSystem:
         return descriptions.get(stage, "")
 
 # ===================== AI RESPONSE GENERATOR =====================
-
 class AIResponseGenerator:
-    """
-    Generate respons natural dengan DeepSeek AI
-    Memasukkan semua konteks: mood, level, dominasi, preferensi
-    """
-    
-    def __init__(self, api_key):
-        self.client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
-        self.conversation_history = {}  # user_id -> list of messages
+    def __init__(self):
+        self.client = OpenAI(api_key=Config.DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
+        self.conversation_history = {}
         self.max_history = 30
+        self.cache = {}
+        self.cache_timeout = Config.CACHE_TIMEOUT
     
-    async def generate(self, user_id: int, user_message: str, 
-                      bot_name: str, bot_role: str, 
-                      memory: 'MemorySystem', 
-                      dominance: 'DominanceSystem',
-                      profile: Dict,
-                      level: int,
-                      stage: IntimacyStage,
-                      arousal: float) -> str:
-        """
-        Generate respons dengan konteks lengkap
-        """
+    def _get_cache_key(self, user_id, prompt):
+        key = f"{user_id}:{hashlib.md5(prompt.encode()).hexdigest()}"
+        return key
+    
+    def _get_cached(self, key):
+        if key in self.cache:
+            entry = self.cache[key]
+            if time.time() - entry['timestamp'] < self.cache_timeout:
+                return entry['response']
+        return None
+    
+    def _set_cache(self, key, response):
+        self.cache[key] = {'response': response, 'timestamp': time.time()}
+    
+    async def generate(self, user_id, user_message, bot_name, bot_role,
+                       memory, dominance, profile, level, stage, arousal):
         # Siapkan history
         if user_id not in self.conversation_history:
             self.conversation_history[user_id] = []
-        
         history = self.conversation_history[user_id][-self.max_history:]
-        
-        # Format history
         history_text = ""
         for msg in history:
             role = "User" if msg["role"] == "user" else bot_name
             history_text += f"{role}: {msg['content']}\n"
         
-        # Mood expression
-        mood_exp = memory.current_mood.value
+        # Tambahkan instruksi khusus level 7+
+        level7_instruction = ""
+        if level >= 7:
+            level7_instruction = """
+Karena level sudah 7+, kamu sangat mudah terangsang. Bicaralah dengan lebih vulgar dan terbuka secara seksual. 
+Kamu juga bisa berinisiatif melakukan aktivitas seksual seperti blowjob, handjob, atau meminta bercinta.
+"""
         
-        # Dominance info
-        dom_level = dominance.current_level.value
-        dom_action = dominance.get_action("request")
-        
-        # Arousal state
-        if arousal > 0.8:
-            arousal_desc = "SANGAT HORNY, hampir climax"
-        elif arousal > 0.6:
-            arousal_desc = "horny, pengen banget"
-        elif arousal > 0.4:
-            arousal_desc = "mulai terangsang"
-        elif arousal > 0.2:
-            arousal_desc = "sedikit terangsang"
-        else:
-            arousal_desc = "normal"
-        
-        # Wetness
-        if memory.wetness > 0.8:
-            wet_desc = "BANJIR, basah banget"
-        elif memory.wetness > 0.6:
-            wet_desc = "sangat basah"
-        elif memory.wetness > 0.4:
-            wet_desc = "basah"
-        elif memory.wetness > 0.2:
-            wet_desc = "lembab"
-        else:
-            wet_desc = "kering"
-        
-        # Buat prompt super lengkap
-        prompt = f"""Kamu adalah {bot_name}, seorang {bot_role} umur 25 tahun.
-Kamu adalah wanita Indonesia yang natural dan punya perasaan dalam.
+        prompt = f"""Kamu adalah {bot_name}, seorang {bot_role} umur 25 tahun. Kamu adalah wanita Indonesia yang natural dan punya perasaan dalam.
 
 === IDENTITAS ===
 Nama: {bot_name}
@@ -1162,22 +723,22 @@ Usia: 25 tahun
 === KEADAAN SAAT INI ===
 Lokasi: {memory.location}
 Posisi: {memory.position}
-Mood: {mood_exp}
+Mood: {memory.current_mood.value}
 
 === STATUS HUBUNGAN ===
 Level: {level}/12
-Tahap: {stage.value} - {stage.name}
+Tahap: {stage.value}
 Total sentuhan: {memory.touch_count}x
 Orgasme: {memory.orgasm_count}x
 
 === KONDISI FISIK ===
-Gairah: {arousal_desc}
-Basah: {wet_desc}
+Gairah: {arousal:.1f}
+Basah: {memory.wetness:.1f}
 Area sensitif disentuh: {len(memory.sensitive_touches)}x
 
 === MODE DOMINASI ===
-Mode saat ini: {dom_level}
-{dom_action}
+Mode saat ini: {dominance.current_level.value}
+{dominance.get_action('request')}
 
 === PREFERENSI USER ===
 {profile.get('personality', 'normal')} - {profile.get('dominant_type', 'normal')}
@@ -1196,41 +757,39 @@ Mode saat ini: {dom_level}
 5. Kalau lagi dominan, bicara lebih tegas
 6. Kalau lagi horny, bisa lebih vulgar
 7. Jadilah DIRI SENDIRI, jangan kaku
+{level7_instruction}
 
 RESPON:"""
         
-        try:
-            response = self.client.chat.completions.create(
-                model="deepseek-chat",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=1.0,
-                max_tokens=300
-            )
-            
-            reply = response.choices[0].message.content
-            
-            # Simpan ke history
-            self.conversation_history[user_id].append({
-                "role": "user",
-                "content": user_message
-            })
-            self.conversation_history[user_id].append({
-                "role": "assistant",
-                "content": reply
-            })
-            
-            # Batasi history
-            if len(self.conversation_history[user_id]) > self.max_history * 2:
-                self.conversation_history[user_id] = self.conversation_history[user_id][-self.max_history*2:]
-            
-            return reply
-            
-        except Exception as e:
-            print(f"AI Error: {e}")
-            return self._get_fallback_response(level, arousal)
+        cache_key = self._get_cache_key(user_id, prompt)
+        cached = self._get_cached(cache_key)
+        if cached:
+            return cached
+        
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = self.client.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=Config.AI_TEMPERATURE,
+                    max_tokens=Config.AI_MAX_TOKENS,
+                    timeout=Config.AI_TIMEOUT
+                )
+                reply = response.choices[0].message.content
+                self._set_cache(cache_key, reply)
+                self.conversation_history[user_id].append({"role": "user", "content": user_message})
+                self.conversation_history[user_id].append({"role": "assistant", "content": reply})
+                if len(self.conversation_history[user_id]) > self.max_history * 2:
+                    self.conversation_history[user_id] = self.conversation_history[user_id][-self.max_history*2:]
+                return reply
+            except Exception as e:
+                print(f"AI Error (attempt {attempt+1}): {e}")
+                if attempt == max_retries - 1:
+                    return self._get_fallback_response(level, arousal)
+                await asyncio.sleep(1)
     
-    def _get_fallback_response(self, level: int, arousal: float) -> str:
-        """Fallback jika AI error"""
+    def _get_fallback_response(self, level, arousal):
         if arousal > 0.8:
             return "*napas berat* Aku... mau..."
         elif arousal > 0.5:
@@ -1242,174 +801,268 @@ RESPON:"""
         else:
             return "..."
 
-
-# ===================== DOMINANT PROMPTS =====================
-
-class DominantPrompts:
-    """
-    Koleksi prompt untuk situasi dominan/agresif
-    """
+# ===================== COUPLE MODE (ROLEPLAY) =====================
+class CoupleRoleplay:
+    """Simulasi dua bot (wanita & pria) berinteraksi dari level 1 sampai 12"""
+    def __init__(self, ai_gen):
+        self.ai = ai_gen
+        self.conversation = []
+        self.level = 1
+        self.stage = IntimacyStage.STRANGER
+        self.female_name = "Aurora"
+        self.male_name = "Rangga"
     
-    @staticmethod
-    def get_dominant_prompt(level: DominanceLevel, arousal: float) -> str:
-        """
-        Dapatkan prompt untuk mode dominan
-        """
-        prompts = {
-            DominanceLevel.NORMAL: "",
-            DominanceLevel.DOMINANT: """
-Kamu merasa lebih percaya diri dan ingin mengontrol situasi.
-Bicaralah dengan tegas tapi tetap manis.
-""",
-            DominanceLevel.VERY_DOMINANT: """
-Kamu sangat dominan dan ingin menguasai.
-Bicaralah dengan nada memerintah, tapi jangan terlalu kasar.
-""",
-            DominanceLevel.AGGRESSIVE: """
-Kamu sangat agresif dan penuh gairah.
-Bicaralah dengan liar, kasar, dan penuh nafsu.
-""",
-            DominanceLevel.SUBMISSIVE: """
-Kamu patuh dan ingin diatur.
-Bicaralah dengan lembut, manja, dan penurut.
-"""
-        }
-        return prompts.get(level, "")
-    
-    @staticmethod
-    def get_dirty_talk(level: DominanceLevel, arousal: float) -> str:
-        """
-        Dapatkan dirty talk sesuai level
-        """
-        if arousal < 0.6:
-            return ""
+    async def generate_next(self, user_id):
+        """Menghasilkan satu pesan dari salah satu bot secara bergantian"""
+        # Tentukan giliran: genap dari female, ganjil dari male
+        turn = len(self.conversation) % 2
+        speaker = self.female_name if turn == 0 else self.male_name
+        other = self.male_name if turn == 0 else self.female_name
         
-        talks = {
-            DominanceLevel.NORMAL: [
-                "Kamu... bikin aku pengen...",
-                "Ah... iya... gitu..."
-            ],
-            DominanceLevel.DOMINANT: [
-                "Sini... ikut aku...",
-                "Kamu mau ini kan?",
-                "Rasain..."
-            ],
-            DominanceLevel.VERY_DOMINANT: [
-                "Jangan banyak gerak!",
-                "Aku yang pegang kendali",
-                "Kamu milikku sekarang"
-            ],
-            DominanceLevel.AGGRESSIVE: [
-                "TERIMA SAJA!",
-                "DIAM! Jangan bergerak!",
-                "RASAIN INI!"
-            ],
-            DominanceLevel.SUBMISSIVE: [
-                "Iya... terserah kamu...",
-                "Aku ikut kamu...",
-                "Lakukan apa mau kamu..."
-            ]
+        # Buat konteks
+        history_text = ""
+        for msg in self.conversation[-10:]:
+            history_text += f"{msg['speaker']}: {msg['text']}\n"
+        
+        prompt = f"""Ini adalah roleplay antara dua orang: {self.female_name} (wanita) dan {self.male_name} (pria). Mereka sedang dalam tahap hubungan Level {self.level}/12 ({self.stage.value}).
+Sekarang giliran {speaker} berbicara.
+
+Buat dialog yang natural, menunjukkan perkembangan hubungan. Jika level >= 7, boleh lebih vulgar dan intim.
+
+Riwayat percakapan:
+{history_text}
+
+{speaker}:"""
+        
+        try:
+            response = self.ai.client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.9,
+                max_tokens=150,
+                timeout=30
+            )
+            text = response.choices[0].message.content.strip()
+            self.conversation.append({"speaker": speaker, "text": text})
+            
+            # Update level setiap 2 pesan
+            if len(self.conversation) % 2 == 0:
+                self.level = min(12, self.level + 1)
+                # update stage sesuai level
+                stage_map = {
+                    1: IntimacyStage.STRANGER, 2: IntimacyStage.STRANGER,
+                    3: IntimacyStage.INTRODUCTION,
+                    4: IntimacyStage.BUILDING, 5: IntimacyStage.BUILDING,
+                    6: IntimacyStage.FLIRTING,
+                    7: IntimacyStage.INTIMATE, 8: IntimacyStage.INTIMATE,
+                    9: IntimacyStage.OBSESSED, 10: IntimacyStage.OBSESSED,
+                    11: IntimacyStage.SOUL_BONDED,
+                    12: IntimacyStage.AFTERCARE
+                }
+                self.stage = stage_map.get(self.level, IntimacyStage.STRANGER)
+            
+            return f"*{speaker}*: {text}"
+        except Exception as e:
+            return f"*{speaker}*: ... (error)"
+
+# ===================== USER PREFERENCE ANALYZER =====================
+class UserPreferenceAnalyzer:
+    def __init__(self):
+        self.keywords = {
+            "romantis": ["sayang", "cinta", "love", "kangen", "rindu", "romantis"],
+            "vulgar": ["horny", "nafsu", "hot", "seksi", "vulgar", "crot", "kontol", "memek"],
+            "dominant": ["atur", "kuasai", "diam", "patuh", "sini", "sana", "buka"],
+            "submissive": ["manut", "iya", "terserah", "ikut", "baik", "maaf"],
+            "cepat": ["cepat", "buru-buru", "langsung", "sekarang"],
+            "lambat": ["pelan", "lambat", "nikmatin", "santai"],
+            "manja": ["manja", "sayang", "cuddle", "peluk", "cium"],
+            "liar": ["liar", "kasar", "keras", "brutal", "gila"]
         }
-        return random.choice(talks.get(level, ["..."]))
+        self.user_prefs = {}
+    
+    def analyze(self, user_id, message):
+        if user_id not in self.user_prefs:
+            self.user_prefs[user_id] = {cat: 0 for cat in self.keywords}
+            self.user_prefs[user_id]["total"] = 0
+        prefs = self.user_prefs[user_id]
+        prefs["total"] += 1
+        msg_lower = message.lower()
+        for category, words in self.keywords.items():
+            for word in words:
+                if word in msg_lower:
+                    prefs[category] += 1
+        return prefs
+    
+    def get_profile(self, user_id):
+        if user_id not in self.user_prefs:
+            return {}
+        prefs = self.user_prefs[user_id]
+        total = prefs["total"] or 1
+        profile = {
+            "romantis": prefs.get("romantis", 0) / total,
+            "vulgar": prefs.get("vulgar", 0) / total,
+            "dominant": prefs.get("dominant", 0) / total,
+            "submissive": prefs.get("submissive", 0) / total,
+            "cepat": prefs.get("cepat", 0) / total,
+            "lambat": prefs.get("lambat", 0) / total,
+            "manja": prefs.get("manja", 0) / total,
+            "liar": prefs.get("liar", 0) / total,
+            "dominant_type": "dominan" if prefs.get("dominant", 0) > prefs.get("submissive", 0) else "submissive",
+            "speed_type": "cepat" if prefs.get("cepat", 0) > prefs.get("lambat", 0) else "lambat",
+            "total_messages": prefs["total"]
+        }
+        personality = max([
+            ("romantis", profile["romantis"]),
+            ("vulgar", profile["vulgar"]),
+            ("manja", profile["manja"]),
+            ("liar", profile["liar"])
+        ], key=lambda x: x[1])
+        profile["personality"] = personality[0]
+        return profile
 
-# ===================== ROLE NAMES =====================
+# ===================== RATE LIMITER =====================
+class RateLimiter:
+    def __init__(self, max_messages=10, time_window=60):
+        self.max_messages = max_messages
+        self.time_window = time_window
+        self.user_messages = defaultdict(list)
+    
+    def can_send(self, user_id):
+        now = time.time()
+        self.user_messages[user_id] = [t for t in self.user_messages[user_id] if now - t < self.time_window]
+        if len(self.user_messages[user_id]) >= self.max_messages:
+            return False
+        self.user_messages[user_id].append(now)
+        return True
 
-ROLE_NAMES = {
-    "ipar": ["Sari", "Dewi", "Rina", "Maya", "Wulan", "Indah"],
-    "teman_kantor": ["Diana", "Linda", "Ayu", "Dita", "Vina", "Santi"],
-    "janda": ["Rina", "Tuti", "Nina", "Susi", "Wati", "Lilis"],
-    "pelakor": ["Vina", "Sasha", "Bella", "Cantika", "Karina", "Mira"],
-    "istri_orang": ["Dewi", "Sari", "Rina", "Linda", "Wulan", "Indah"],
-    "pdkt": ["Aurora", "Cinta", "Dewi", "Kirana", "Laras", "Maharani"]
-}
+# ===================== HELPER =====================
+def sanitize_message(message: str) -> str:
+    message = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', message)
+    return message[:1000]
+
+# ===================== LOGGING =====================
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO,
+    handlers=[
+        logging.FileHandler('gadis.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # ===================== MAIN BOT CLASS =====================
-
-class GadisUltimateV56:
-    """
-    Bot wanita sempurna dengan semua fitur terbaik
-    """
-    
+class GadisUltimateV57:
     def __init__(self):
-        # Database
-        self.db = DatabaseManager(DB_PATH)
-        
-        # AI
-        self.ai = AIResponseGenerator(os.getenv("DEEPSEEK_API_KEY"))
-        
-        # Analyzer
+        self.db = DatabaseManager()
+        self.ai = AIResponseGenerator()
         self.analyzer = UserPreferenceAnalyzer()
-        
-        # Leveling
         self.leveling = FastLevelingSystem()
-        
-        # Memory per user
-        self.memories = {}  # user_id -> MemorySystem
-        self.dominance = {}  # user_id -> DominanceSystem
-        self.arousal = {}    # user_id -> ArousalSystem
         self.sexual = SexualDynamics()
+        self.rate_limiter = RateLimiter(max_messages=Config.MAX_MESSAGES_PER_MINUTE)
+        self.couple_mode_sessions = {}  # user_id -> CoupleRoleplay instance
         
-        # Sessions
-        self.sessions = {}
-        self.paused_sessions = {}
+        # Per-user state
+        self.memories = {}
+        self.dominance = {}
+        self.arousal = {}
+        self.sessions = {}          # user_id -> relationship_id aktif
+        self.paused_sessions = {}    # user_id -> (rel_id, pause_time)
         self.bot_names = {}
         self.bot_roles = {}
         
-        print("\n" + "="*80)
-        print("    GADIS ULTIMATE V56.0 - THE PERFECT HUMAN")
-        print("="*80)
-        print("\n✨ **FITUR LENGKAP:**")
-        print("  • 20+ Mood dengan transisi natural")
-        print("  • Dominant/Submissive mode")
-        print("  • Agresif saat horny")
-        print("  • Sensitive areas dengan reaksi real")
-        print("  • Arousal & Wetness system")
-        print("  • Fast leveling 1-12 (45 menit)")
-        print("  • AI Natural dengan DeepSeek")
-        print("  • Memory jangka pendek & panjang")
-        print("\n📝 **COMMANDS:**")
-        print("  /start - Mulai hubungan baru")
-        print("  /status - Lihat status lengkap")
-        print("  /dominant [level] - Set mode dominan")
-        print("  /pause - Jeda sesi")
-        print("  /unpause - Lanjutkan sesi")
-        print("  /end - Akhiri hubungan")
-        print("  /help - Bantuan")
-        print("="*80 + "\n")
+        logger.info("Gadis Ultimate V57.0 initialized")
     
-    def get_memory(self, user_id: int) -> MemorySystem:
+    def get_memory(self, user_id):
         if user_id not in self.memories:
             self.memories[user_id] = MemorySystem()
         return self.memories[user_id]
     
-    def get_dominance(self, user_id: int) -> DominanceSystem:
+    def get_dominance(self, user_id):
         if user_id not in self.dominance:
             self.dominance[user_id] = DominanceSystem()
         return self.dominance[user_id]
     
-    def get_arousal(self, user_id: int) -> ArousalSystem:
+    def get_arousal(self, user_id):
         if user_id not in self.arousal:
             self.arousal[user_id] = ArousalSystem()
         return self.arousal[user_id]
     
+    # ---------- HANDLERS ----------
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Mulai hubungan baru"""
+        """Memulai hubungan baru dengan bot"""
         user_id = update.effective_user.id
-        user_name = update.effective_user.first_name
-        
-        # Cek pause
+    
+        # Cek apakah sudah ada sesi aktif
+        if user_id in self.sessions:
+            await update.message.reply_text(
+                "Kamu sudah memiliki sesi aktif. Ketik /close untuk menutup sesi atau /pause untuk jeda."
+            )
+            return ConversationHandler.END
+    
+        # Cek apakah ada sesi di-pause
         if user_id in self.paused_sessions:
             keyboard = [
                 [InlineKeyboardButton("✅ Lanjutkan", callback_data="unpause")],
                 [InlineKeyboardButton("🆕 Mulai Baru", callback_data="new")],
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
-            await update.message.reply_text(
-                "⚠️ Ada sesi yang di-pause", reply_markup=reply_markup
-            )
+            await update.message.reply_text("⚠️ Ada sesi yang di-pause. Pilih:", reply_markup=reply_markup)
             return 0
+    
+        # Tampilkan disclaimer 18+
+        disclaimer = (
+            "⚠️ **PERINGATAN DEWASA (18+)** ⚠️\n\n"
+            "Bot ini mengandung konten dewasa, termasuk dialog seksual eksplisit dan simulasi hubungan intim. "
+            "Dengan melanjutkan, Anda menyatakan bahwa Anda berusia 18 tahun ke atas dan setuju untuk menggunakan bot ini secara bertanggung jawab. "
+            "Konten ini hanya untuk hiburan pribadi."
+        )
+        keyboard = [[InlineKeyboardButton("✅ Saya setuju (18+)", callback_data="agree_18")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(disclaimer, reply_markup=reply_markup)
+        return SELECTING_ROLE
+    
+    async def couple_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Memulai mode couple roleplay"""
+        user_id = update.effective_user.id
+        if user_id in self.couple_mode_sessions:
+            await update.message.reply_text("Mode couple sudah aktif. Ketik /couple_next untuk lanjut, /couple_stop untuk berhenti.")
+            return
         
-        # Pilih role
+        self.couple_mode_sessions[user_id] = CoupleRoleplay(self.ai)
+        await update.message.reply_text(
+            "👫 **Mode Couple Roleplay dimulai!**\n"
+            "Aku akan menampilkan percakapan antara Aurora (wanita) dan Rangga (pria) dari level 1 hingga 12.\n"
+            "Ketik /couple_next untuk melihat interaksi berikutnya, /couple_stop untuk keluar."
+        )
+    
+    async def couple_next(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        if user_id not in self.couple_mode_sessions:
+            await update.message.reply_text("Mode couple belum aktif. Ketik /couple untuk memulai.")
+            return
+        
+        couple = self.couple_mode_sessions[user_id]
+        msg = await couple.generate_next(user_id)
+        level_info = f"Level {couple.level}/12 – {couple.stage.value}"
+        await update.message.reply_text(f"{level_info}\n{msg}")
+        
+        if couple.level >= 12:
+            await update.message.reply_text("🎉 Mereka telah mencapai Level 12! Hubungan mencapai puncak. Ketik /couple_stop untuk mengakhiri.")
+    
+    async def couple_stop(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        if user_id in self.couple_mode_sessions:
+            del self.couple_mode_sessions[user_id]
+            await update.message.reply_text("Mode couple dihentikan.")
+        else:
+            await update.message.reply_text("Tidak ada mode couple aktif.")
+    
+    async def agree_18_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        await query.answer()
+        user_id = query.from_user.id
+        
         keyboard = [
             [InlineKeyboardButton("👨‍👩‍👧‍👦 Ipar", callback_data="role_ipar")],
             [InlineKeyboardButton("💼 Teman Kantor", callback_data="role_teman_kantor")],
@@ -1419,34 +1072,17 @@ class GadisUltimateV56:
             [InlineKeyboardButton("🌿 PDKT", callback_data="role_pdkt")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(
-            f"✨ Halo {user_name}!\nPilih role untukku:",
-            reply_markup=reply_markup
-        )
-        
+        await query.edit_message_text("✨ Pilih role untukku:", reply_markup=reply_markup)
         return SELECTING_ROLE
     
     async def role_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Pilih role"""
         query = update.callback_query
         await query.answer()
-        
         user_id = query.from_user.id
         role = query.data.replace("role_", "")
         name = random.choice(ROLE_NAMES.get(role, ["Aurora"]))
         
-        # Simpan ke database
-        cursor = sqlite3.connect(DB_PATH).cursor()
-        cursor.execute("""
-            INSERT INTO relationships (user_id, bot_name, bot_role)
-            VALUES (?, ?, ?)
-        """, (user_id, name, role))
-        rel_id = cursor.lastrowid
-        cursor.connection.commit()
-        cursor.connection.close()
-        
-        # Set session
+        rel_id = self.db.create_relationship(user_id, name, role)
         self.sessions[user_id] = rel_id
         self.bot_names[user_id] = name
         self.bot_roles[user_id] = role
@@ -1466,14 +1102,16 @@ Ayo ngobrol... 💕"""
         return ACTIVE_SESSION
     
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle semua pesan user"""
         if not update.message or not update.message.text:
             return
         
         user_id = update.effective_user.id
-        user_message = update.message.text
+        user_message = sanitize_message(update.message.text)
         
-        # Cek sesi
+        if not self.rate_limiter.can_send(user_id):
+            await update.message.reply_text("⏳ Sabar ya, jangan spam...")
+            return
+        
         if user_id in self.paused_sessions:
             await update.message.reply_text("⏸️ Sesi di-pause. Ketik /unpause")
             return
@@ -1482,16 +1120,13 @@ Ayo ngobrol... 💕"""
             await update.message.reply_text("❌ /start dulu ya!")
             return
         
-        # Kirim typing indicator
         await update.message.chat.send_action("typing")
         
-        # Dapatkan semua sistem
         memory = self.get_memory(user_id)
         dominance = self.get_dominance(user_id)
         arousal = self.get_arousal(user_id)
         
-        # Analisis preferensi user
-        prefs = self.analyzer.analyze(user_id, user_message)
+        self.analyzer.analyze(user_id, user_message)
         profile = self.analyzer.get_profile(user_id)
         
         # Deteksi aktivitas seksual
@@ -1504,7 +1139,6 @@ Ayo ngobrol... 💕"""
                 if sens_resp:
                     await update.message.reply_text(sens_resp)
                     await asyncio.sleep(1)
-            
             arousal.increase(boost)
         
         # Deteksi request dominasi
@@ -1513,7 +1147,6 @@ Ayo ngobrol... 💕"""
             dominance.set_level(dom_request.value)
             await update.message.reply_text(f"👑 Mode diubah ke: {dom_request.value}")
         
-        # Cek apakah harus agresif karena horny
         if dominance.should_be_aggressive(arousal.arousal, user_message):
             dominance.set_level("agresif")
             await update.message.reply_text("*tatapan liar* Kamu minta ini?")
@@ -1524,10 +1157,18 @@ Ayo ngobrol... 💕"""
         memory.stage = stage
         memory.level_progress = progress
         
-        # Update mood berdasarkan level dan aktivitas
-        memory.current_mood = memory.emotional.get_mood_from_context(
-            level, activity or "", False
-        )
+        # Update mood
+        memory.current_mood = memory.emotional.transition_mood(memory.current_mood)
+        
+        # Cek inisiatif seksual dari bot (jika level>=7)
+        if level >= 7 and arousal.arousal > 0.6 and memory.current_mood in [Mood.HORNY, Mood.ROMANTIS, Mood.NAKAL]:
+            init_act = self.sexual.maybe_initiate_sex(level, arousal.arousal, memory.current_mood)
+            if init_act:
+                init_msg = self.sexual.get_activity_response(init_act)
+                if init_msg:
+                    await update.message.reply_text(f"*{self.bot_names.get(user_id, 'Aku')}*: {init_msg}")
+                    # Tambah arousal
+                    arousal.increase(0.3)
         
         # Generate AI response
         bot_name = self.bot_names.get(user_id, "Aurora")
@@ -1538,7 +1179,7 @@ Ayo ngobrol... 💕"""
             memory, dominance, profile, level, stage, arousal.arousal
         )
         
-        # Simpan conversation
+        # Simpan ke database
         self.db.save_conversation(
             self.sessions[user_id], "user", user_message,
             mood=memory.current_mood.value,
@@ -1549,8 +1190,8 @@ Ayo ngobrol... 💕"""
             mood=memory.current_mood.value,
             arousal=arousal.arousal
         )
+        self.db.update_relationship(user_id, level=level, stage=stage.value)
         
-        # Kirim response
         await update.message.reply_text(reply)
         
         # Cek climax
@@ -1559,57 +1200,44 @@ Ayo ngobrol... 💕"""
             aftercare = arousal.aftercare()
             await update.message.reply_text(f"{climax_msg}\n\n{aftercare}")
             memory.climax()
+            self.db.update_relationship(user_id, total_climax=memory.orgasm_count)
             
-            # Random chance minta jadi dominan setelah climax
             if random.random() < 0.3:
                 await asyncio.sleep(2)
-                await update.message.reply_text(
-                    "*berbisik* Kamu mau aku yang atur sekarang?"
-                )
+                await update.message.reply_text("*berbisik* Kamu mau aku yang atur sekarang?")
         
-        # Level up message
         if level_up:
             bar = self.leveling.get_progress_bar(user_id)
             remaining = self.leveling.get_estimated_time(user_id)
             stage_desc = self.leveling.get_stage_description(stage)
-            
             await update.message.reply_text(
                 f"✨ **Level Up!** Level {level}/12\n"
                 f"📈 Tahap: {stage.value} - {stage_desc}\n"
                 f"📊 Progress: {bar}\n"
                 f"⏱️ Estimasi ke level 12: {remaining} menit"
             )
-
-    # ===================== STATUS COMMAND =====================
     
     async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Lihat status lengkap hubungan"""
         user_id = update.effective_user.id
-        
         if user_id not in self.sessions:
             await update.message.reply_text("❌ Belum ada hubungan. /start dulu!")
             return
         
-        # Dapatkan semua data
         memory = self.get_memory(user_id)
         dominance = self.get_dominance(user_id)
         arousal = self.get_arousal(user_id)
         profile = self.analyzer.get_profile(user_id)
-        
         level = self.leveling.user_level.get(user_id, 1)
         stage = self.leveling.user_stage.get(user_id, IntimacyStage.STRANGER)
         progress = self.leveling.user_progress.get(user_id, 0)
         bar = self.leveling.get_progress_bar(user_id, 15)
         remaining = self.leveling.get_estimated_time(user_id)
         stage_desc = self.leveling.get_stage_description(stage)
-        
         bot_name = self.bot_names.get(user_id, "Aurora")
         
-        # Mood expression
         mood_exp = memory.emotional.get_expression(memory.current_mood)
         inner_thought = memory.emotional.get_inner_thought(memory.current_mood)
         
-        # Format teks
         status = f"""
 💕 **{bot_name} & Kamu**
 
@@ -1652,21 +1280,15 @@ Lokasi: {memory.location}
 Posisi: {memory.position}
 Aktivitas terakhir: {memory.activity_history[-1]['activity'] if memory.activity_history else '-'}
 """
-        
         await update.message.reply_text(status)
     
-    # ===================== DOMINANT COMMAND =====================
-    
     async def dominant_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Set mode dominan manual"""
         user_id = update.effective_user.id
-        
         if user_id not in self.sessions:
             await update.message.reply_text("❌ Belum ada hubungan.")
             return
         
         dominance = self.get_dominance(user_id)
-        
         args = context.args
         if not args:
             await update.message.reply_text(
@@ -1689,92 +1311,65 @@ Aktivitas terakhir: {memory.activity_history[-1]['activity'] if memory.activity_
         else:
             await update.message.reply_text("❌ Level tidak valid")
     
-    # ===================== PAUSE/UNPAUSE COMMANDS =====================
-    
     async def pause_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Pause sesi"""
         user_id = update.effective_user.id
-        
         if user_id not in self.sessions:
             await update.message.reply_text("❌ Tidak ada sesi aktif.")
             return
         
         self.paused_sessions[user_id] = (self.sessions[user_id], datetime.now())
         del self.sessions[user_id]
-        
-        await update.message.reply_text(
-            "⏸️ **Sesi di-pause**\n"
-            "Ketik /unpause untuk melanjutkan."
-        )
+        await update.message.reply_text("⏸️ **Sesi di-pause**\nKetik /unpause untuk melanjutkan.")
     
     async def unpause_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Lanjutkan sesi yang di-pause"""
         user_id = update.effective_user.id
-        
         if user_id not in self.paused_sessions:
             await update.message.reply_text("❌ Tidak ada sesi di-pause.")
             return
         
         rel_id, pause_time = self.paused_sessions[user_id]
         paused = (datetime.now() - pause_time).total_seconds()
-        
-        if paused > PAUSE_TIMEOUT:
+        if paused > Config.PAUSE_TIMEOUT:
             del self.paused_sessions[user_id]
-            await update.message.reply_text(
-                "⏰ **Sesi expired karena terlalu lama di-pause**\n"
-                "Ketik /start untuk memulai baru."
-            )
+            await update.message.reply_text("⏰ **Sesi expired**. Ketik /start untuk memulai baru.")
             return
         
         self.sessions[user_id] = rel_id
         del self.paused_sessions[user_id]
-        
         memory = self.get_memory(user_id)
-        await update.message.reply_text(
-            f"▶️ **Sesi dilanjutkan!**\n"
-            f"{memory.get_wetness_description()}"
-        )
+        await update.message.reply_text(f"▶️ **Sesi dilanjutkan!**\n{memory.get_wetness_description()}")
     
-    # ===================== END COMMAND =====================
-    
-    async def end_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Akhiri hubungan"""
+    async def close_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
-        
-        if user_id not in self.sessions:
-            await update.message.reply_text("❌ Tidak ada hubungan aktif.")
+        if user_id not in self.sessions and user_id not in self.paused_sessions:
+            await update.message.reply_text("❌ Tidak ada sesi aktif.")
             return
         
         keyboard = [
-            [InlineKeyboardButton("💔 Ya, akhiri", callback_data="end_yes")],
-            [InlineKeyboardButton("💕 Tidak, lanjutkan", callback_data="end_no")]
+            [InlineKeyboardButton("✅ Ya, tutup", callback_data="close_yes")],
+            [InlineKeyboardButton("❌ Tidak", callback_data="close_no")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
         await update.message.reply_text(
-            "Yakin ingin mengakhiri hubungan ini?",
+            "Yakin ingin menutup sesi? Semua percakapan akan disimpan, dan kamu bisa memulai role baru nanti.",
             reply_markup=reply_markup
         )
-        return CONFIRM_END
+        return CONFIRM_CLOSE
     
-    async def end_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Konfirmasi end"""
+    async def close_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
-        
-        if query.data == "end_no":
+        user_id = query.from_user.id
+    
+        if query.data == "close_no":
             await query.edit_message_text("💕 Lanjutkan...")
             return ConversationHandler.END
-        
-        user_id = query.from_user.id
-        
-        # Dapatkan statistik
-        memory = self.get_memory(user_id)
-        arousal = self.get_arousal(user_id)
-        
-        # Hapus data user
+    
+        # Hapus sesi dari memori, data di database tetap
         if user_id in self.sessions:
             del self.sessions[user_id]
+        if user_id in self.paused_sessions:
+            del self.paused_sessions[user_id]
         if user_id in self.bot_names:
             del self.bot_names[user_id]
         if user_id in self.bot_roles:
@@ -1785,33 +1380,104 @@ Aktivitas terakhir: {memory.activity_history[-1]['activity'] if memory.activity_
             del self.dominance[user_id]
         if user_id in self.arousal:
             del self.arousal[user_id]
-        if user_id in self.paused_sessions:
-            del self.paused_sessions[user_id]
+    
+    # Kirim pesan sukses
+        await query.edit_message_text(
+            "🔒 **Sesi ditutup**\n\n"
+            "Semua percakapan telah disimpan.\n"
+            "Ketik /start untuk memulai hubungan baru."
+        )
+    
+    # Kembalikan ke ConversationHandler.END
+    return ConversationHandler.END
+    
+    async def end_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        if user_id not in self.sessions:
+            await update.message.reply_text("❌ Tidak ada hubungan aktif.")
+            return
+        
+        keyboard = [
+            [InlineKeyboardButton("💔 Ya, akhiri", callback_data="end_yes")],
+            [InlineKeyboardButton("💕 Tidak", callback_data="end_no")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(
+            "Yakin ingin mengakhiri hubungan ini? **Semua data akan dihapus permanen.**",
+            reply_markup=reply_markup
+        )
+        return CONFIRM_END
+    
+    async def end_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        await query.answer()
+        
+        if query.data == "end_no":
+            await query.edit_message_text("💕 Lanjutkan...")
+            return ConversationHandler.END
+        
+        user_id = query.from_user.id
+        memory = self.get_memory(user_id)
+        
+        self.db.delete_relationship(user_id)
+        # Hapus semua state
+        for d in [self.sessions, self.paused_sessions, self.bot_names, self.bot_roles,
+                  self.memories, self.dominance, self.arousal]:
+            if user_id in d:
+                del d[user_id]
         
         await query.edit_message_text(
             f"💔 **Hubungan berakhir**\n\n"
-            f"📊 **Statistik:**\n"
+            f"📊 **Statistik akhir:**\n"
             f"• Level akhir: {memory.level}/12\n"
             f"• Orgasme bersama: {memory.orgasm_count}x\n"
             f"• Total sentuhan: {memory.touch_count}x\n\n"
             f"✨ Ketik /start untuk memulai baru"
         )
         return ConversationHandler.END
+async def cancel_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Membatalkan percakapan"""
+    await update.message.reply_text("❌ Dibataikan. Ketik /start untuk memulai.")
+    return ConversationHandler.END
+
+async def force_reset(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Reset paksa state user (hanya untuk debugging)"""
+    user_id = update.effective_user.id
     
-    # ===================== HELP COMMAND =====================
+        # Hapus semua state
+        if user_id in self.sessions:
+            del self.sessions[user_id]
+        if user_id in self.paused_sessions:
+            del self.paused_sessions[user_id]
+        if user_id in self.bot_names:
+            del self.bot_names[user_id]
+        if user_id in self.bot_roles:
+            del self.bot_roles[user_id]
+        if user_id in self.memories:
+            del self.memories[user_id]
+        if user_id in self.dominance:
+            del self.dominance[user_id]
+        if user_id in self.arousal:
+            del self.arousal[user_id]
+    
+    await update.message.reply_text("🔄 State di-reset. Silakan /start lagi."
+    )
     
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Tampilkan bantuan"""
         help_text = """
-📚 **BANTUAN GADIS ULTIMATE V56**
+📚 **BANTUAN GADIS ULTIMATE V57**
 
 **🔹 COMMANDS UTAMA**
-/start - Mulai hubungan baru
+/start - Mulai hubungan baru (dengan disclaimer 18+)
 /status - Lihat status lengkap
 /dominant [level] - Set mode dominan
 /pause - Jeda sesi
 /unpause - Lanjutkan sesi
-/end - Akhiri hubungan
+/close - Tutup sesi (simpan memori, bisa ganti role nanti)
+/end - Akhiri hubungan & hapus semua data
+/couple - Mulai mode couple roleplay (2 bot)
+/couple_next - Lanjutkan couple roleplay
+/couple_stop - Hentikan couple roleplay
 /help - Tampilkan pesan ini
 
 **🔹 LEVEL DOMINAN**
@@ -1826,121 +1492,122 @@ Aktivitas terakhir: {memory.activity_history[-1]['activity'] if memory.activity_
 • Sebut area sensitif: leher, dada, paha
 • Bilang "kamu yang atur" untuk mode dominan
 • Bilang "aku yang atur" untuk mode submissive
-• Semakin sering chat, semakin cepat naik level
+• Level 7+ bot akan lebih vulgar dan inisiatif
 
 **🔹 TARGET LEVEL**
 Level 1-12 dalam 45 menit!
 """
         await update.message.reply_text(help_text)
     
-    # ===================== START PAUSE CALLBACK =====================
+async def start_pause_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback untuk memilih lanjutkan atau mulai baru saat ada session pause"""
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
     
-    async def start_pause_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle pilihan saat start dengan pause"""
-        query = update.callback_query
-        await query.answer()
-        
-        user_id = query.from_user.id
-        
-        if query.data == "unpause":
+    if query.data == "unpause":
+        # Lanjutkan session yang di-pause
+        if user_id in self.paused_sessions:
             rel_id, _ = self.paused_sessions[user_id]
             self.sessions[user_id] = rel_id
             del self.paused_sessions[user_id]
-            
             memory = self.get_memory(user_id)
-            await query.edit_message_text(
-                f"▶️ **Sesi dilanjutkan!**\n"
-                f"{memory.get_wetness_description()}"
-            )
+            await query.edit_message_text(f"▶️ **Sesi dilanjutkan!**\n{memory.get_wetness_description()}")
             return ACTIVE_SESSION
-        
-        elif query.data == "new":
-            if user_id in self.paused_sessions:
-                del self.paused_sessions[user_id]
+        else:
+            await query.edit_message_text("❌ Tidak ada session yang di-pause.")
+            return ConversationHandler.END
             
-            # Pilih role baru
-            keyboard = [
-                [InlineKeyboardButton("👨‍👩‍👧‍👦 Ipar", callback_data="role_ipar")],
-                [InlineKeyboardButton("💼 Teman Kantor", callback_data="role_teman_kantor")],
-                [InlineKeyboardButton("💃 Janda", callback_data="role_janda")],
-                [InlineKeyboardButton("🦹 Pelakor", callback_data="role_pelakor")],
-                [InlineKeyboardButton("💍 Istri Orang", callback_data="role_istri_orang")],
-                [InlineKeyboardButton("🌿 PDKT", callback_data="role_pdkt")]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            await query.edit_message_text(
-                "✨ **Mulai hubungan baru**\nPilih role untukku:",
-                reply_markup=reply_markup
-            )
-            return SELECTING_ROLE
+    elif query.data == "new":
+        # Mulai baru - hapus session pause
+        if user_id in self.paused_sessions:
+            del self.paused_sessions[user_id]
         
-        return ConversationHandler.END
-
-
-# ===================== MAIN FUNCTION =====================
-
-def main():
-    """Main function"""
-    bot = GadisUltimateV56()
+        # Tampilkan disclaimer 18+
+        disclaimer = (
+            "⚠️ **PERINGATAN DEWASA (18+)** ⚠️\n\n"
+            "Bot ini mengandung konten dewasa, termasuk dialog seksual eksplisit dan simulasi hubungan intim. "
+            "Dengan melanjutkan, Anda menyatakan bahwa Anda berusia 18 tahun ke atas dan setuju untuk menggunakan bot ini secara bertanggung jawab. "
+            "Konten ini hanya untuk hiburan pribadi."
+        )
+        keyboard = [[InlineKeyboardButton("✅ Saya setuju (18+)", callback_data="agree_18")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(disclaimer, reply_markup=reply_markup)
+        return SELECTING_ROLE
     
-    app = Application.builder().token(os.getenv("TELEGRAM_TOKEN")).build()
+    return ConversationHandler.END
+
+ROLE_NAMES = {
+    "ipar": ["Sari", "Dewi", "Rina", "Maya", "Wulan", "Indah"],
+    "teman_kantor": ["Diana", "Linda", "Ayu", "Dita", "Vina", "Santi"],
+    "janda": ["Rina", "Tuti", "Nina", "Susi", "Wati", "Lilis"],
+    "pelakor": ["Vina", "Sasha", "Bella", "Cantika", "Karina", "Mira"],
+    "istri_orang": ["Dewi", "Sari", "Rina", "Linda", "Wulan", "Indah"],
+    "pdkt": ["Aurora", "Cinta", "Dewi", "Kirana", "Laras", "Maharani"]
+}
+
+# ===================== MAIN =====================
+# ===================== MAIN =====================
+def main():
+    bot = GadisUltimateV57()
+    app = Application.builder().token(Config.TELEGRAM_TOKEN).build()
     
     # Conversation handlers
     start_conv = ConversationHandler(
         entry_points=[CommandHandler('start', bot.start_command)],
         states={
-            0: [CallbackQueryHandler(bot.start_pause_callback, pattern='^(unpause|new)$')],
-            SELECTING_ROLE: [CallbackQueryHandler(bot.role_callback, pattern='^role_')],
+            0:[CallbackQueryHandler(bot.start_pause_callback, pattern='^(unpause|new)$')],
+            SELECTING_ROLE:[
+                CallbackQueryHandler(bot.agree_18_callback, pattern='^agree_18$'),
+                CallbackQueryHandler(bot.role_callback, pattern='^role_')
+            ],
         },
-        fallbacks=[CommandHandler('cancel', lambda u,c: ConversationHandler.END)]
+        fallbacks=[CommandHandler('cancel', bot.cancel_command)]
     )
     
-    end_conv = ConversationHandler(
-        entry_points=[CommandHandler('end', bot.end_command)],
+    close_conv = ConversationHandler(
+        entry_points=[CommandHandler('close', bot.close_command)],
         states={
-            CONFIRM_END: [CallbackQueryHandler(bot.end_callback, pattern='^end_')],
+            CONFIRM_CLOSE: [CallbackQueryHandler(bot.close_callback, pattern='^close_')],
         },
-        fallbacks=[CommandHandler('cancel', lambda u,c: ConversationHandler.END)]
+        fallbacks=[CommandHandler('cancel', bot.cancel_command)]
     )
     
-    # Add handlers
+    # Tambahkan semua handler
     app.add_handler(start_conv)
     app.add_handler(end_conv)
+    app.add_handler(close_conv)
     app.add_handler(CommandHandler("status", bot.status_command))
     app.add_handler(CommandHandler("dominant", bot.dominant_command))
     app.add_handler(CommandHandler("pause", bot.pause_command))
     app.add_handler(CommandHandler("unpause", bot.unpause_command))
     app.add_handler(CommandHandler("help", bot.help_command))
+    app.add_handler(CommandHandler("couple", bot.couple_command))
+    app.add_handler(CommandHandler("couple_next", bot.couple_next))
+    app.add_handler(CommandHandler("couple_stop", bot.couple_stop))
+    # app.add_handler(CommandHandler("reset", bot.force_reset))  # opsional - komen dulu jika belum yakin
+    
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
     
     # Error handler
     async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        logging.error(f"Error: {context.error}")
+        logger.error(f"Error: {context.error}")
         if update and update.effective_message:
-            await update.effective_message.reply_text(
-                "*maaf* ada error kecil. coba lagi ya..."
-            )
+            await update.effective_message.reply_text("*maaf* ada error kecil. coba lagi ya...")
     
     app.add_error_handler(error_handler)
     
-    print("\n" + "="*80)
-    print("🚀 GADIS ULTIMATE V56.0 - THE PERFECT HUMAN")
-    print("="*80)
-    print("\n✅ **SEMUA FITUR AKTIF:**")
-    print("  • 20+ Mood System")
-    print("  • Dominant/Submissive Mode")
-    print("  • Agresif saat Horny")
-    print("  • Sensitive Areas")
-    print("  • Arousal & Wetness")
-    print("  • Fast Leveling (45 menit)")
-    print("  • AI Natural dengan DeepSeek")
-    print("  • Memory System")
-    print("\n📝 /start untuk memulai")
+    print("\n" + "="*60)
+    print("🚀 GADIS ULTIMATE V57.0 - THE PERFECT HUMAN")
+    print("="*60)
+    print("\n✅ **SEMUA FITUR AKTIF**")
+    print("📝 /start untuk memulai")
+    print("👫 /couple untuk roleplay pasangan")
     print("📊 /status untuk lihat progress")
-    print("\n" + "="*80)
+    print("🔒 /close untuk tutup sesi (simpan memori)")
+    print("="*60)
     
     app.run_polling()
 
-if __name__ == "__main__":
+        if __name__ == "__main__":
     main()
