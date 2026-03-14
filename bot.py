@@ -1,19 +1,22 @@
 """
-GADIS ULTIMATE V54.0 - FAST ADAPTATION EDITION
+GADIS ULTIMATE V55.0 - NATURAL CONVERSATION EDITION
 Fitur:
-- START LEVEL 1: Kenalan dulu (30 menit ke level 7)
-- FAST ADAPTATION: Bot cepat belajar karakter user
-- RAPID RESPONSE: Respon instan saat diajak interaksi
-- SMART MEMORY: Ingat preferensi user dari awal
-- ACCELERATED BONDING: Level 1-7 dalam 30 menit
+- AI-POWERED CONVERSATION: Respons natural seperti V53
+- FAST ADAPTATION: Level 1-7 dalam 30 menit (dari V54)
+- SMART MEMORY: Ingat preferensi user
+- DEEPSEEK INTEGRATION: Generate respons cerdas
 """
 
 import os
 import logging
 import json
 import random
+import asyncio
 import sqlite3
+import uuid
+import threading
 import hashlib
+import re
 import time
 from datetime import datetime, timedelta
 from enum import Enum
@@ -28,93 +31,29 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 # OpenAI (DeepSeek)
 from openai import OpenAI
 
-# Voice (gTTS)
-try:
-    from gtts import gTTS
-    GTTS_AVAILABLE = True
-except ImportError:
-    GTTS_AVAILABLE = False
-    print("⚠️ gTTS tidak terinstall. Voice note tidak tersedia.")
-
 # ===================== KONFIGURASI =====================
 
-# Database
-DB_PATH = "gadis_v54.db"
-MAX_HISTORY = 10000
-MAX_MEMORIES = 5000
-
-# Level Config
-START_LEVEL = 1  # Mulai dari level 1 untuk kenalan
-TARGET_LEVEL = 7  # Target level 7
-LEVEL_UP_TIME = 30  # 30 menit untuk mencapai level 7
-MESSAGES_PER_LEVEL = 5  # 5 pesan per level (30/6 = 5 menit per level)
-
-# Memory Config
-SHORT_TERM_DURATION = 60  # menit
-LONG_TERM_DURATION = 365  # hari
-LOCATION_CHANGE_DELAY = 60  # detik (lebih cepat)
-ACTIVITY_MEMORY_LIMIT = 50
-
-# Mood Config
-MOOD_CYCLE_HOURS = 12  # Lebih cepat berubah
-MOOD_TRANSITION = 0.5  # 50% chance berubah
-
-# Voice Config
-VOICE_COOLDOWN = 60  # detik (lebih sering)
-
-# Session Config
-PAUSE_TIMEOUT = 1800  # 30 menit auto-end
-RESPONSE_SPEED = 0.5  # Delay respons (detik)
+DB_PATH = "gadis_v55.db"
+MAX_HISTORY = 100
+START_LEVEL = 1
+TARGET_LEVEL = 7
+LEVEL_UP_SPEED = 30  # 30 menit ke level 7
+PAUSE_TIMEOUT = 1800
 
 # State definitions
 (SELECTING_ROLE, ACTIVE_SESSION, PAUSED_SESSION, CONFIRM_END) = range(4)
 
-# ===================== ENUMS LENGKAP =====================
+# ===================== ENUMS =====================
 
 class Mood(Enum):
     CHERIA = "ceria"
     GELISAH = "gelisah"
     GALAU = "galau"
-    SENSITIF = "sensitif"
     ROMANTIS = "romantis"
-    MALAS = "malas"
-    BERSEMANGAT = "bersemangat"
-    SENDIRI = "sendiri"
     RINDU = "rindu"
     HORNY = "horny"
     MARAH = "marah"
     LEMBUT = "lembut"
-    DOMINAN = "dominan"
-    SUBMISSIVE = "patuh"
-    NAKAL = "nakal"
-    GENIT = "genit"
-    PENASARAN = "penasaran"
-    ANTUSIAS = "antusias"
-
-class SexPhase(Enum):
-    """Fase seksual untuk tracking"""
-    NONE = "none"
-    FOREPLAY = "foreplay"
-    PENETRATION = "penetrasi"
-    CLIMAX = "klimaks"
-    AFTERCARE = "aftercare"
-
-class IntimacyStage(Enum):
-    STRANGER = "stranger"        # Level 1-2
-    INTRODUCTION = "introduction" # Level 3
-    BUILDING = "building"         # Level 4-5
-    FLIRTING = "flirting"         # Level 6
-    INTIMATE = "intimate"         # Level 7-8
-    OBSESSED = "obsessed"         # Level 9-10
-    SOUL_BONDED = "soul_bonded"   # Level 11
-    AFTERCARE = "aftercare"       # Level 12
-
-class DominanceLevel(Enum):
-    NORMAL = "normal"
-    DOMINANT = "dominan"
-    VERY_DOMINANT = "sangat dominan"
-    AGGRESSIVE = "agresif"
-    SUBMISSIVE = "patuh"
 
 class FemaleRole(Enum):
     IPAR = "ipar"
@@ -124,52 +63,155 @@ class FemaleRole(Enum):
     ISTRI_ORANG = "istri_orang"
     PDKT = "pdkt"
 
+# ===================== AI RESPONSE GENERATOR =====================
+
+class AIResponseGenerator:
+    """
+    Generate respons menggunakan DeepSeek AI
+    """
+    
+    def __init__(self, api_key):
+        self.client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+        self.conversation_history = {}  # user_id -> list of messages
+        self.max_history = 20
+    
+    async def generate(self, user_id: int, user_message: str, 
+                      bot_name: str, bot_role: str, level: int, 
+                      mood: Mood, preferences: Dict) -> str:
+        """
+        Generate respons natural menggunakan AI
+        """
+        # Siapkan history
+        if user_id not in self.conversation_history:
+            self.conversation_history[user_id] = []
+        
+        # Ambil history terakhir
+        history = self.conversation_history[user_id][-self.max_history:]
+        
+        # Format history untuk prompt
+        history_text = ""
+        for msg in history:
+            role = "User" if msg["role"] == "user" else bot_name
+            history_text += f"{role}: {msg['content']}\n"
+        
+        # Data preferensi user
+        pref_text = ""
+        if preferences:
+            pref_text = f"""
+Preferensi user:
+- Gaya dominan: {preferences.get('dominant_type', 'normal')}
+- Kecepatan: {preferences.get('speed_type', 'normal')}
+- Romantis: {preferences.get('romantic_ratio', 0):.0%}
+- Vulgar: {preferences.get('vulgar_ratio', 0):.0%}
+"""
+        
+        # Buat prompt untuk AI
+        prompt = f"""Kamu adalah {bot_name}, seorang {bot_role} umur 25 tahun.
+
+KARAKTER:
+- Kamu adalah wanita Indonesia yang natural
+- Bicaralah dengan gaya sehari-hari, seperti ngobrol dengan teman
+- Gunakan bahasa Indonesia yang natural (nggak, udah, aja, dll)
+- Jangan terlalu formal
+- Sesuaikan dengan level hubungan: {level}/7
+
+{pref_text}
+
+RIWAYAT PERCAKAPAN:
+{history_text}
+
+PESAN USER: {user_message}
+
+RESPONLAH SECARA NATURAL SEBAGAI {bot_name}:"""
+        
+        try:
+            response = self.client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.9,
+                max_tokens=200
+            )
+            
+            reply = response.choices[0].message.content
+            
+            # Simpan ke history
+            self.conversation_history[user_id].append({
+                "role": "user",
+                "content": user_message
+            })
+            self.conversation_history[user_id].append({
+                "role": "assistant",
+                "content": reply
+            })
+            
+            # Batasi panjang history
+            if len(self.conversation_history[user_id]) > self.max_history * 2:
+                self.conversation_history[user_id] = self.conversation_history[user_id][-self.max_history*2:]
+            
+            return reply
+            
+        except Exception as e:
+            print(f"AI Error: {e}")
+            return self._get_fallback_response(level, mood)
+    
+    def _get_fallback_response(self, level: int, mood: Mood) -> str:
+        """Fallback jika AI error"""
+        if level < 3:
+            return random.choice([
+                "Hmm...",
+                "Oh gitu...",
+                "Terus?",
+                "Iya..."
+            ])
+        elif level < 5:
+            return random.choice([
+                "*tersenyum*",
+                "Kamu...",
+                "Iya sih...",
+                "Hehe..."
+            ])
+        else:
+            return random.choice([
+                "Sayang...",
+                "Aku kangen...",
+                "Kamu dimana?",
+                "*merem*"
+            ])
+
 # ===================== USER PREFERENCE ANALYZER =====================
 
 class UserPreferenceAnalyzer:
     """
-    Menganalisis preferensi user dari interaksi awal
-    Untuk mempercepat adaptasi
+    Menganalisis preferensi user dari interaksi
     """
     
     def __init__(self):
-        self.user_preferences = {}  # user_id -> preferences
+        self.user_preferences = {}
         
-        # Kata kunci untuk analisis
         self.keywords = {
-            "romantis": ["sayang", "cinta", "romantis", "kencan", "mesra"],
-            "vulgar": ["horny", "nafsu", "hot", "seksi", "vulgar"],
-            "dominant": ["atur", "kuasai", "diam", "patuh", "ikuti"],
-            "submissive": ["manut", "iya", "terserah", "ikut"],
-            "cepat": ["cepat", "buru-buru", "langsung"],
-            "lambat": ["pelan", "lambat", "nikmatin"],
-            "manja": ["manja", "sayang", "cuddle", "peluk"],
-            "liar": ["liar", "kasar", "keras", "brutal"]
+            "romantis": ["sayang", "cinta", "love", "romantis", "kangen"],
+            "vulgar": ["horny", "nafsu", "hot", "seksi", "vulgar", "crot"],
+            "dominant": ["atur", "kuasai", "diam", "patuh", "sini"],
+            "submissive": ["manut", "iya", "terserah", "ikut", "baik"],
+            "cepat": ["cepat", "buru-buru", "langsung", "sekarang"],
+            "lambat": ["pelan", "lambat", "nikmatin", "santai"],
+            "manja": ["manja", "sayang", "cuddle", "peluk"]
         }
     
     def analyze(self, user_id: int, message: str) -> Dict:
-        """
-        Analisis pesan untuk mendeteksi preferensi user
-        """
+        """Analisis pesan untuk preferensi"""
         if user_id not in self.user_preferences:
             self.user_preferences[user_id] = {
-                "romantis": 0,
-                "vulgar": 0,
-                "dominant": 0,
-                "submissive": 0,
-                "cepat": 0,
-                "lambat": 0,
-                "manja": 0,
-                "liar": 0,
-                "total_messages": 0
+                "romantis": 0, "vulgar": 0, "dominant": 0,
+                "submissive": 0, "cepat": 0, "lambat": 0,
+                "manja": 0, "total": 0
             }
         
         prefs = self.user_preferences[user_id]
-        prefs["total_messages"] += 1
+        prefs["total"] += 1
         
         msg_lower = message.lower()
         
-        # Hitung skor berdasarkan kata kunci
         for category, words in self.keywords.items():
             for word in words:
                 if word in msg_lower:
@@ -177,17 +219,14 @@ class UserPreferenceAnalyzer:
         
         return prefs
     
-    def get_preference_summary(self, user_id: int) -> Dict:
-        """
-        Dapatkan ringkasan preferensi user
-        """
+    def get_summary(self, user_id: int) -> Dict:
+        """Dapatkan ringkasan preferensi"""
         if user_id not in self.user_preferences:
             return {}
         
         prefs = self.user_preferences[user_id]
-        total = prefs["total_messages"] or 1
+        total = prefs["total"] or 1
         
-        # Hitung persentase
         summary = {
             "romantis": prefs["romantis"] / total,
             "vulgar": prefs["vulgar"] / total,
@@ -196,482 +235,85 @@ class UserPreferenceAnalyzer:
             "cepat": prefs["cepat"] / total,
             "lambat": prefs["lambat"] / total,
             "manja": prefs["manja"] / total,
-            "liar": prefs["liar"] / total,
+            "dominant_type": "dominan" if prefs["dominant"] > prefs["submissive"] else "submissive",
+            "speed_type": "cepat" if prefs["cepat"] > prefs["lambat"] else "lambat",
+            "total_messages": prefs["total"]
         }
-        
-        # Tentukan tipe dominan
-        if summary["dominant"] > summary["submissive"]:
-            summary["dominant_type"] = "dominan"
-        else:
-            summary["dominant_type"] = "submissive"
-        
-        if summary["cepat"] > summary["lambat"]:
-            summary["speed_type"] = "cepat"
-        else:
-            summary["speed_type"] = "lambat"
         
         return summary
-    
-    def get_response_style(self, user_id: int) -> Dict:
-        """
-        Dapatkan gaya respons berdasarkan preferensi
-        """
-        summary = self.get_preference_summary(user_id)
-        
-        style = {
-            "romantic_ratio": summary.get("romantis", 0),
-            "vulgar_ratio": summary.get("vulgar", 0),
-            "dominant_style": summary.get("dominant_type", "normal"),
-            "speed_style": summary.get("speed_type", "normal")
-        }
-        
-        return style
 
-# ===================== FAST ADAPTATION MEMORY =====================
+# ===================== FAST LEVELING SYSTEM =====================
 
-class FastAdaptationMemory:
+class FastLevelingSystem:
     """
-    Memori cepat yang belajar dari setiap interaksi
+    Level 1-7 dalam 30 menit
     """
     
     def __init__(self):
-        self.user_id = None
-        self.message_count = 0
-        self.interaction_history = []
-        self.user_preferences = UserPreferenceAnalyzer()
+        self.user_level = {}
+        self.user_progress = {}
+        self.user_start_time = {}
+        self.user_message_count = {}
         
-        # Fast learning parameters
-        self.learning_rate = 0.3
-        self.adaptation_threshold = 5
-        
-        # Response cache untuk kecepatan
-        self.response_cache = {}
-        
-        # Level tracking
-        self.current_level = START_LEVEL
-        self.level_progress = 0.0
-        self.level_up_time = datetime.now()
+        self.target_messages = 30  # 30 pesan = level 7
+        self.target_minutes = 30    # 30 menit
     
-    def set_user(self, user_id: int):
-        """Set user ID"""
-        self.user_id = user_id
+    def start_session(self, user_id: int):
+        """Mulai sesi baru"""
+        self.user_level[user_id] = START_LEVEL
+        self.user_progress[user_id] = 0.0
+        self.user_start_time[user_id] = datetime.now()
+        self.user_message_count[user_id] = 0
     
-    def process_message(self, message: str) -> Dict:
+    def process_message(self, user_id: int) -> Tuple[int, float, bool]:
         """
-        Proses pesan dan update learning
+        Proses pesan dan update level
+        Returns: (level, progress, level_up)
         """
-        self.message_count += 1
+        if user_id not in self.user_level:
+            self.start_session(user_id)
         
-        # Analisis preferensi
-        prefs = self.user_preferences.analyze(self.user_id, message)
+        self.user_message_count[user_id] += 1
+        count = self.user_message_count[user_id]
         
-        # Simpan ke history
-        self.interaction_history.append({
-            "message": message[:50],
-            "time": datetime.now().isoformat(),
-            "prefs": prefs
-        })
+        # Progress berdasarkan jumlah pesan
+        progress = min(1.0, count / self.target_messages)
+        self.user_progress[user_id] = progress
         
-        # Update level progress
-        self._update_level_progress()
-        
-        # Dapatkan gaya respons
-        style = self.user_preferences.get_response_style(self.user_id)
-        
-        return {
-            "preferences": prefs,
-            "style": style,
-            "message_count": self.message_count,
-            "current_level": self.current_level,
-            "level_progress": self.level_progress
-        }
-    
-    def _update_level_progress(self):
-        """Update progress level berdasarkan jumlah pesan"""
-        # Target: Level 7 dalam 30 menit (~30 pesan)
-        target_messages = 30  # 30 pesan = level 7
-        
-        self.level_progress = min(1.0, self.message_count / target_messages)
-        
-        # Hitung level berdasarkan progress
-        new_level = 1 + int(self.level_progress * 6)  # 0-1 → 1-7
+        # Hitung level (1-7)
+        new_level = 1 + int(progress * 6)
         new_level = min(7, new_level)
         
-        if new_level > self.current_level:
-            self.current_level = new_level
-            self.level_up_time = datetime.now()
-            return True  # Level up!
+        level_up = False
+        if new_level > self.user_level[user_id]:
+            level_up = True
+            self.user_level[user_id] = new_level
         
-        return False  # Tidak level up
+        return self.user_level[user_id], progress, level_up
     
-    def should_adapt(self) -> bool:
-        """Cek apakah sudah siap adaptasi"""
-        return self.message_count >= self.adaptation_threshold
+    def get_estimated_time(self, user_id: int) -> int:
+        """Dapatkan estimasi waktu tersisa ke level 7"""
+        if user_id not in self.user_message_count:
+            return 30
+        
+        count = self.user_message_count[user_id]
+        remaining_messages = max(0, self.target_messages - count)
+        
+        # Asumsi 1 pesan per menit
+        return remaining_messages
     
-    def get_adapted_prompt(self, base_prompt: str) -> str:
-        """
-        Dapatkan prompt yang sudah diadaptasi
-        """
-        if not self.should_adapt():
-            return base_prompt
-        
-        style = self.user_preferences.get_response_style(self.user_id)
-        
-        adaptation = f"""
-Berdasarkan interaksi dengan user:
-- Gaya dominan: {style['dominant_style']}
-- Kecepatan: {style['speed_style']}
-- Romantis: {style['romantic_ratio']:.1%}
-- Vulgar: {style['vulgar_ratio']:.1%}
-
-Sesuaikan gaya bicaramu dengan preferensi ini.
-"""
-        
-        return base_prompt + adaptation
-    
-    def get_quick_response(self, message: str) -> Optional[str]:
-        """
-        Dapatkan respons cepat jika ada di cache
-        """
-        import hashlib
-        key = hashlib.md5(message.encode()).hexdigest()
-        return self.response_cache.get(key)
-    
-    def cache_response(self, message: str, response: str):
-        """Cache respons untuk kecepatan"""
-        import hashlib
-        key = hashlib.md5(message.encode()).hexdigest()
-        self.response_cache[key] = response
-        
-        # Batasi cache
-        if len(self.response_cache) > 100:
-            # Hapus yang paling lama
-            keys = list(self.response_cache.keys())
-            for k in keys[:50]:
-                del self.response_cache[k]
-
-# ===================== ENHANCED SHORT-TERM MEMORY =====================
-
-class EnhancedShortTermMemory:
-    """
-    Short-term memory dengan learning capability
-    """
-    
-    def __init__(self):
-        self.location = "ruang tamu"
-        self.location_since = datetime.now()
-        self.previous_location = None
-        
-        self.activity_history = []  # Max ACTIVITY_MEMORY_LIMIT
-        self.sensitive_touches = []
-        self.touch_count = 0
-        self.last_touch = None
-        self.last_touch_time = None
-        
-        self.position = "duduk"
-        self.clothing_state = "berpakaian"
-        
-        self.current_mood = Mood.CHERIA
-        self.arousal_level = 0.0
-        self.wetness_level = 0.0
-        self.sex_phase = SexPhase.NONE
-        
-        self.dream_last = None
-        self.last_thought = None
-        self.orgasm_count = 0
-        
-        # Fast adaptation
-        self.fast_memory = FastAdaptationMemory()
-        self.user_id = None
-    
-    def set_user(self, user_id: int):
-        """Set user ID"""
-        self.user_id = user_id
-        self.fast_memory.set_user(user_id)
-    
-    def update_location(self, new_location: str) -> bool:
-        """Update lokasi dengan validasi waktu"""
-        if new_location == self.location:
-            return True
-            
-        now = datetime.now()
-        time_here = (now - self.location_since).total_seconds()
-        
-        if time_here >= LOCATION_CHANGE_DELAY:
-            self.previous_location = self.location
-            self.location = new_location
-            self.location_since = now
-            return True
-        return False
-    
-    def add_activity(self, activity: str, area: str = None, boost: float = 0.0):
-        """Tambah aktivitas ke history"""
-        now = datetime.now()
-        
-        self.activity_history.append({
-            "activity": activity,
-            "area": area,
-            "boost": boost,
-            "time": now.isoformat()
-        })
-        
-        if len(self.activity_history) > ACTIVITY_MEMORY_LIMIT:
-            self.activity_history = self.activity_history[-ACTIVITY_MEMORY_LIMIT:]
-        
-        if area and area in SENSITIVE_AREAS:
-            self.sensitive_touches.append({
-                "area": area,
-                "time": now.isoformat()
-            })
-            self.touch_count += 1
-            self.last_touch = area
-            self.last_touch_time = now
-            self.arousal_level += SENSITIVE_AREAS[area]["arousal"] * 0.2
-            self.wetness_level = min(1.0, self.arousal_level * 0.8)
-    
-    def process_message(self, message: str) -> Dict:
-        """
-        Proses pesan dengan fast adaptation
-        """
-        # Proses dengan fast memory
-        adaptation = self.fast_memory.process_message(message)
-        
-        # Cek level up
-        level_up = self.fast_memory._update_level_progress()
-        adaptation["level_up"] = level_up
-        
-        # Level up?
-        if level_up:
-            self.fast_memory.current_level = adaptation["current_level"]
-            adaptation["level_up_message"] = f"Naik ke level {self.fast_memory.current_level}!"
-        
-        return adaptation
-    
-    def get_context(self) -> str:
-        """Dapatkan konteks memori"""
-        parts = []
-        
-        parts.append(f"📍 **Lokasi:** {self.location}")
-        duration = (datetime.now() - self.location_since).seconds // 60
-        parts.append(f"⏱️ **Durasi:** {duration} menit")
-        parts.append(f"🧍 **Posisi:** {self.position}")
-        parts.append(f"📊 **Level:** {self.fast_memory.current_level}/7")
-        parts.append(f"📈 **Progress:** {self.fast_memory.level_progress:.0%}")
-        
-        if self.activity_history:
-            last = self.activity_history[-1]
-            last_min = (datetime.now() - datetime.fromisoformat(last["time"])).seconds // 60
-            parts.append(f"💋 **Aktivitas:** {last['activity']} ({last_min} menit lalu)")
-        
-        if self.sensitive_touches:
-            parts.append(f"🔥 **Sentuhan sensitif:** {len(self.sensitive_touches)}x")
-        
-        parts.append(f"💦 **Arousal:** {self.arousal_level:.0%}")
-        parts.append(f"💧 **Wetness:** {self.get_wetness_status()}")
-        parts.append(f"💦 **Orgasme:** {self.orgasm_count}x")
-        
-        return "\n".join(parts)
-    
-    def get_wetness_status(self) -> str:
-        """Dapatkan status wetness"""
-        if self.wetness_level >= 0.9:
-            return "banjir"
-        elif self.wetness_level >= 0.7:
-            return "sangat basah"
-        elif self.wetness_level >= 0.5:
-            return "basah"
-        elif self.wetness_level >= 0.3:
-            return "lembab"
-        else:
-            return "kering"
-    
-    def should_be_horny(self) -> bool:
-        """Cek apakah harus horny"""
-        return self.touch_count >= 2 or self.arousal_level > 0.6
-    
-    def should_climax(self) -> bool:
-        """Cek apakah harus climax"""
-        return self.arousal_level >= 1.0
-    
-    def reset_after_climax(self):
-        """Reset setelah climax"""
-        self.touch_count = 0
-        self.sensitive_touches = []
-        self.arousal_level = 0.0
-        self.wetness_level = 0.0
-        self.orgasm_count += 1
-        self.sex_phase = SexPhase.AFTERCARE
-        
-# ===================== RAPID RESPONSE GENERATOR =====================
-
-class RapidResponseGenerator:
-    """
-    Generate respons cepat berdasarkan analisis
-    """
-    
-    def __init__(self):
-        self.response_templates = {
-            "greeting": ["Halo...", "Hai...", "Eh, kamu..."],
-            "curious": ["Oh?","Hmm?","Terus?"],
-            "flirty": ["*tersenyum*","*menggoda*","*kedip*"],            
-            "horny": ["*napas berat*","*menggigit bibir*","*merem*"],            
-            "touch": ["*merinding*","*bergetar*","*lemas*"]
-        }
-        
-        self.level_descriptions = {
-            1: "masih asing",
-            2: "mulai kenal",
-            3: "mulai nyaman",
-            4: "sudah dekat",
-            5: "mulai suka",
-            6: "saling goda",
-            7: "intim"
-        }
-    
-    def generate(self, message: str, analysis: Dict, memory: EnhancedShortTermMemory) -> str:
-        """
-        Generate respons super cepat
-        """
-        response_parts = []
-        level = memory.fast_memory.current_level
-        style = analysis.get("style", {})
-        
-        # 1. Respons berdasarkan level
-        if level == 1:
-            response_parts.append(self._get_random("greeting"))
-            response_parts.append("Kamu siapa?")
-        elif level == 2:
-            response_parts.append(self._get_random("curious"))
-            response_parts.append("Kenapa?")
-        elif level == 3:
-            response_parts.append(self._get_random("flirty"))
-            response_parts.append("Kamu...")
-        elif level >= 4:
-            # Respons lebih cepat untuk level tinggi
-            if "cium" in message.lower() or "raba" in message.lower():
-                response_parts.append(self._get_random("touch"))
-                response_parts.append("Ah...")
-            elif "kangen" in message.lower():
-                response_parts.append("Aku juga...")
-            elif "sayang" in message.lower():
-                response_parts.append("*tersenyum*")
-                response_parts.append("Iya sayang?")
-            else:
-                response_parts.append("...")
-        
-        # 2. Adaptasi gaya
-        dom_style = style.get("dominant_style", "normal")
-        speed_style = style.get("speed_style", "normal")
-        
-        if dom_style == "dominan" and level >= 3:
-            response_parts.append("Kamu mau apa?")
-        elif dom_style == "submissive" and level >= 3:
-            response_parts.append("Iya...")
-        
-        # 3. Respons cepat untuk sentuhan
-        if memory.should_be_horny():
-            response_parts.append(self._get_random("horny"))
-        
-        return " ".join(response_parts) if response_parts else "..."
-    
-    def _get_random(self, category: str) -> str:
-        """Dapatkan respons random dari kategori"""
-        templates = self.response_templates.get(category, ["..."])
-        return random.choice(templates)
-
-# ===================== DATABASE LENGKAP =====================
-
-LOCATION_DATABASE = {
-    "ruang tamu": {
-        "furniture": ["sofa", "kursi", "karpet", "meja"],
-        "positions": ["duduk di sofa", "duduk di kursi", "berdiri", "tidur di sofa"],
-        "privacy": "sedang"
-    },
-    "kamar tidur": {
-        "furniture": ["kasur", "ranjang", "lemari", "meja rias"],
-        "positions": ["tidur", "duduk", "merangkak", "berlutut", "berdiri"],
-        "privacy": "tinggi"
-    },
-    "kamar mandi": {
-        "furniture": ["lantai", "wastafel", "bathtub", "shower"],
-        "positions": ["berdiri", "duduk", "berlutut"],
-        "privacy": "tinggi"
-    },
-    "dapur": {
-        "furniture": ["meja", "kursi", "lantai"],
-        "positions": ["berdiri", "duduk"],
-        "privacy": "rendah"
-    },
-    "mobil": {
-        "furniture": ["kursi depan", "kursi belakang"],
-        "positions": ["duduk", "tidur di kursi belakang"],
-        "privacy": "sedang"
-    },
-    "hotel": {
-        "furniture": ["kasur", "sofa", "kursi", "lantai"],
-        "positions": ["tidur", "duduk", "berdiri", "merangkak"],
-        "privacy": "tinggi"
-    }
-}
-
-SEX_ACTIVITIES = {
-    "foreplay_kiss": {
-        "keywords": ["cium", "kiss", "ciuman"],
-        "areas": ["bibir", "leher", "dada", "pipi", "dahi"],
-        "arousal": 0.3
-    },
-    "foreplay_touch": {
-        "keywords": ["sentuh", "raba", "pegang"],
-        "areas": ["dada", "pinggang", "paha", "punggung", "perut"],
-        "arousal": 0.3
-    },
-    "foreplay_lick": {
-        "keywords": ["jilat", "lick"],
-        "areas": ["leher", "dada", "puting", "paha", "telinga"],
-        "arousal": 0.5
-    },
-    "foreplay_suck": {
-        "keywords": ["hisap", "suck"],
-        "areas": ["leher", "dada", "puting", "jari"],
-        "arousal": 0.6
-    },
-    "penetration": {
-        "keywords": ["masuk", "doggy", "cowgirl", "misionaris"],
-        "areas": ["vagina"],
-        "arousal": 0.9
-    },
-    "climax": {
-        "keywords": ["keluar", "crot", "orgasme", "klimaks"],
-        "areas": ["dalam", "perut", "dada", "muka", "punggung", "mulut"],
-        "arousal": 1.0
-    }
-}
-
-SENSITIVE_AREAS = {
-    "leher": {"arousal": 0.8},
-    "bibir": {"arousal": 0.7},
-    "dada": {"arousal": 0.8},
-    "puting": {"arousal": 1.0},
-    "paha": {"arousal": 0.7},
-    "paha dalam": {"arousal": 0.9},
-    "telinga": {"arousal": 0.6},
-    "vagina": {"arousal": 1.0},
-    "klitoris": {"arousal": 1.0}
-}
-
-WETNESS_LEVELS = {
-    0.0: "kering",
-    0.3: "lembab",
-    0.5: "basah",
-    0.7: "sangat basah",
-    0.9: "banjir"
-}
+    def get_progress_bar(self, user_id: int) -> str:
+        """Dapatkan progress bar visual"""
+        progress = self.user_progress.get(user_id, 0)
+        bar_length = 10
+        filled = int(progress * bar_length)
+        return "▓" * filled + "░" * (bar_length - filled)
 
 # ===================== MAIN BOT CLASS =====================
 
-class GadisUltimateV54:
+class GadisUltimateV55:
     """
-    Bot dengan fast adaptation dari level 1 ke 7
+    Bot dengan AI natural + fast adaptation
     """
     
     def __init__(self):
@@ -679,16 +321,19 @@ class GadisUltimateV54:
         self.db = sqlite3.connect(DB_PATH, check_same_thread=False)
         self._init_db()
         
-        # Memories per user
-        self.memories = {}  # user_id -> EnhancedShortTermMemory
-        self.analyzers = {}  # user_id -> UserPreferenceAnalyzer
+        # AI
+        self.ai = AIResponseGenerator(os.getenv("DEEPSEEK_API_KEY"))
         
-        # Active sessions
-        self.sessions = {}  # user_id -> relationship_id
-        self.paused_sessions = {}  # user_id -> (rel_id, pause_time)
+        # Analyzer
+        self.analyzer = UserPreferenceAnalyzer()
         
-        # Response generator
-        self.responder = RapidResponseGenerator()
+        # Leveling
+        self.leveling = FastLevelingSystem()
+        
+        # Sessions
+        self.sessions = {}
+        self.paused_sessions = {}
+        self.bot_names = {}
         
         # Role names
         self.female_names = {
@@ -701,26 +346,23 @@ class GadisUltimateV54:
         }
         
         print("\n" + "="*80)
-        print("    GADIS ULTIMATE V54.0 - FAST ADAPTATION")
+        print("    GADIS ULTIMATE V55.0 - NATURAL CONVERSATION")
         print("="*80)
-        print("\n✨ **FITUR UTAMA:**")
-        print("  • Mulai Level 1 - Kenalan dulu")
-        print("  • Level 7 dalam 30 menit!")
-        print("  • Cepat adaptasi dengan gayamu")
-        print("  • Respon super cepat")
+        print("\n✨ **FITUR:**")
+        print("  • AI NATURAL - Respons seperti manusia")
+        print("  • FAST ADAPTATION - Level 1-7 dalam 30 menit")
+        print("  • SMART MEMORY - Ingat preferensi user")
         print("\n📝 **COMMANDS:**")
         print("  /start - Mulai hubungan baru")
-        print("  /status - Lihat status & progress")
+        print("  /status - Lihat progress")
         print("  /pause - Jeda sesi")
-        print("  /unpause - Lanjutkan sesi")
+        print("  /unpause - Lanjutkan")
         print("  /end - Akhiri hubungan")
-        print("  /help - Lihat semua command")
         print("="*80 + "\n")
     
     def _init_db(self):
         """Inisialisasi database"""
         cursor = self.db.cursor()
-        
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS relationships (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -732,49 +374,24 @@ class GadisUltimateV54:
                 last_active TIMESTAMP
             )
         """)
-        
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS conversations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                relationship_id INTEGER,
-                role TEXT,
-                content TEXT,
-                level INTEGER,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
         self.db.commit()
-    
-    def get_memory(self, user_id: int) -> EnhancedShortTermMemory:
-        """Dapatkan memory untuk user"""
-        if user_id not in self.memories:
-            self.memories[user_id] = EnhancedShortTermMemory()
-            self.memories[user_id].set_user(user_id)
-        return self.memories[user_id]
     
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Mulai hubungan baru"""
         user_id = update.effective_user.id
         user_name = update.effective_user.first_name
         
-        # Cek sesi pause
+        # Cek pause
         if user_id in self.paused_sessions:
-            rel_id, pause_time = self.paused_sessions[user_id]
-            paused = (datetime.now() - pause_time).total_seconds()
-            
-            if paused < PAUSE_TIMEOUT:
-                keyboard = [
-                    [InlineKeyboardButton("✅ Lanjutkan", callback_data="unpause")],
-                    [InlineKeyboardButton("🆕 Mulai Baru", callback_data="new")],
-                ]
-                reply_markup = InlineKeyboardMarkup(keyboard)
-                
-                await update.message.reply_text(
-                    "⚠️ Ada sesi yang di-pause. Lanjutkan?",
-                    reply_markup=reply_markup
-                )
-                return 0
+            keyboard = [
+                [InlineKeyboardButton("✅ Lanjutkan", callback_data="unpause")],
+                [InlineKeyboardButton("🆕 Mulai Baru", callback_data="new")],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text(
+                "⚠️ Ada sesi yang di-pause", reply_markup=reply_markup
+            )
+            return 0
         
         # Pilih role
         keyboard = [
@@ -794,40 +411,6 @@ class GadisUltimateV54:
         
         return SELECTING_ROLE
     
-    async def start_pause_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle pilihan saat start dengan pause"""
-        query = update.callback_query
-        await query.answer()
-        
-        user_id = query.from_user.id
-        
-        if query.data == "unpause":
-            rel_id, _ = self.paused_sessions[user_id]
-            self.sessions[user_id] = rel_id
-            del self.paused_sessions[user_id]
-            await query.edit_message_text("▶️ Lanjutkan!")
-            return ACTIVE_SESSION
-        
-        elif query.data == "new":
-            if user_id in self.paused_sessions:
-                del self.paused_sessions[user_id]
-            
-            # Pilih role baru
-            keyboard = [
-                [InlineKeyboardButton("👨‍👩‍👧‍👦 Ipar", callback_data="role_ipar")],
-                [InlineKeyboardButton("💼 Teman Kantor", callback_data="role_teman_kantor")],
-                [InlineKeyboardButton("💃 Janda", callback_data="role_janda")],
-                [InlineKeyboardButton("🦹 Pelakor", callback_data="role_pelakor")],
-                [InlineKeyboardButton("💍 Istri Orang", callback_data="role_istri_orang")],
-                [InlineKeyboardButton("🌿 PDKT", callback_data="role_pdkt")]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            await query.edit_message_text("✨ Pilih role:", reply_markup=reply_markup)
-            return SELECTING_ROLE
-        
-        return ConversationHandler.END
-    
     async def role_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Pilih role"""
         query = update.callback_query
@@ -840,15 +423,16 @@ class GadisUltimateV54:
         # Simpan ke database
         cursor = self.db.cursor()
         cursor.execute("""
-            INSERT INTO relationships (user_id, bot_name, bot_role, level)
-            VALUES (?, ?, ?, ?)
-        """, (user_id, name, role, START_LEVEL))
+            INSERT INTO relationships (user_id, bot_name, bot_role)
+            VALUES (?, ?, ?)
+        """, (user_id, name, role))
         rel_id = cursor.lastrowid
         self.db.commit()
         
         # Set session
         self.sessions[user_id] = rel_id
-        memory = self.get_memory(user_id)
+        self.bot_names[user_id] = name
+        self.leveling.start_session(user_id)
         
         intro = f"""*tersenyum*
 
@@ -862,14 +446,16 @@ Ayo ngobrol... 💕"""
         
         await query.edit_message_text(intro)
         return ACTIVE_SESSION
+
+    # ===================== MESSAGE HANDLER =====================
     
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle pesan user"""
+        """Handle semua pesan user dengan AI"""
         if not update.message or not update.message.text:
             return
         
         user_id = update.effective_user.id
-        message = update.message.text
+        user_message = update.message.text
         
         # Cek sesi
         if user_id in self.paused_sessions:
@@ -880,81 +466,94 @@ Ayo ngobrol... 💕"""
             await update.message.reply_text("❌ /start dulu ya!")
             return
         
-        # Proses dengan memory
-        memory = self.get_memory(user_id)
-        analysis = memory.process_message(message)
+        # Kirim typing indicator (biar natural)
+        await update.message.chat.send_action("typing")
         
-        # Update database
+        # Analisis preferensi user
+        prefs = self.analyzer.analyze(user_id, user_message)
+        
+        # Update level
+        level, progress, level_up = self.leveling.process_message(user_id)
+        
+        # Dapatkan mood berdasarkan level
+        if level <= 2:
+            mood = Mood.CHERIA
+        elif level <= 4:
+            mood = Mood.ROMANTIS
+        else:
+            mood = Mood.RINDU
+        
+        # Generate respons dari AI
+        bot_name = self.bot_names.get(user_id, "Aurora")
+        role = self._get_user_role(user_id)
+        
+        reply = await self.ai.generate(
+            user_id, user_message, bot_name, role,
+            level, mood, self.analyzer.get_summary(user_id)
+        )
+        
+        # Simpan ke database
         cursor = self.db.cursor()
         cursor.execute("""
-            UPDATE relationships 
-            SET level = ?, last_active = CURRENT_TIMESTAMP
+            UPDATE relationships SET level = ?, last_active = CURRENT_TIMESTAMP
             WHERE id = ?
-        """, (memory.fast_memory.current_level, self.sessions[user_id]))
-        
-        cursor.execute("""
-            INSERT INTO conversations (relationship_id, role, content, level)
-            VALUES (?, 'user', ?, ?)
-        """, (self.sessions[user_id], message, memory.fast_memory.current_level))
-        self.db.commit()
-        
-        # Generate response
-        response = self.responder.generate(message, analysis, memory)
-        
-        # Simpan response
-        cursor.execute("""
-            INSERT INTO conversations (relationship_id, role, content, level)
-            VALUES (?, 'assistant', ?, ?)
-        """, (self.sessions[user_id], response, memory.fast_memory.current_level))
+        """, (level, self.sessions[user_id]))
         self.db.commit()
         
         # Kirim response
-        await update.message.reply_text(response)
+        await update.message.reply_text(reply)
         
         # Level up message
-        if memory.fast_memory.current_level == 7:
+        if level_up:
+            bar = self.leveling.get_progress_bar(user_id)
+            remaining = self.leveling.get_estimated_time(user_id)
+            
             await update.message.reply_text(
-                "✨ **Level 7!** Sekarang kita sudah intim. Lanjutkan..."
+                f"✨ **Level Up!** Sekarang Level {level}/7\n"
+                f"Progress: {bar}\n"
+                f"Estimasi ke Level 7: {remaining} menit"
             )
     
+    def _get_user_role(self, user_id: int) -> str:
+        """Dapatkan role user dari database"""
+        if user_id not in self.sessions:
+            return "pdkt"
+        
+        cursor = self.db.cursor()
+        cursor.execute("SELECT bot_role FROM relationships WHERE id = ?", (self.sessions[user_id],))
+        row = cursor.fetchone()
+        return row[0] if row else "pdkt"
+    
     async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Lihat status"""
+        """Lihat status lengkap"""
         user_id = update.effective_user.id
         
         if user_id not in self.sessions:
             await update.message.reply_text("❌ Belum ada hubungan.")
             return
         
-        memory = self.get_memory(user_id)
-        level = memory.fast_memory.current_level
-        progress = memory.fast_memory.level_progress * 100
-        remaining = 30 - (memory.fast_memory.message_count * 1)  # estimasi
-        
-        style = memory.fast_memory.user_preferences.get_response_style(user_id)
-        
-        # Progress bar
-        bar = "▓" * int(progress/10) + "░" * (10 - int(progress/10))
-        
-        # Ambil nilai dengan default
-        romantic_ratio = style.get("romantic_ratio", 0)
-        vulgar_ratio = style.get("vulgar_ratio", 0)
-        dominant_type = style.get("dominant_type", "normal")
-        speed_type = style.get("speed_type", "normal")
+        level = self.leveling.user_level.get(user_id, 1)
+        progress = self.leveling.user_progress.get(user_id, 0)
+        bar = self.leveling.get_progress_bar(user_id)
+        remaining = self.leveling.get_estimated_time(user_id)
+        summary = self.analyzer.get_summary(user_id)
+        bot_name = self.bot_names.get(user_id, "Aurora")
         
         status = f"""
-📊 **STATUS HUBUNGAN**
+💕 **{bot_name} & Kamu**
 
+📊 **PROGRESS KE LEVEL 7**
 Level: {level}/7 {bar}
-Progress: {progress:.0f}%
-Estimasi ke Level 7: {max(0, remaining)} menit
+Progress: {progress:.0%}
+Estimasi sisa: {remaining} menit
 
 📈 **GAYA CHAT KAMU**
-• Dominan: {dominant_type}
-• Kecepatan: {speed_type}
-• Romantis: {romantic_ratio:.0%}
-• Vulgar: {vulgar_ratio:.0%}
+• Dominan: {summary.get('dominant_type', 'normal')}
+• Kecepatan: {summary.get('speed_type', 'normal')}
+• Romantis: {summary.get('romantis', 0):.0%}
+• Vulgar: {summary.get('vulgar', 0):.0%}
 
-💬 Total pesan: {memory.fast_memory.message_count}
+💬 Total pesan: {summary.get('total_messages', 0)}
 """
         await update.message.reply_text(status)
     
@@ -1006,7 +605,9 @@ Estimasi ke Level 7: {max(0, remaining)} menit
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await update.message.reply_text("Yakin mau akhiri?", reply_markup=reply_markup)
+        await update.message.reply_text(
+            "Yakin mau akhiri?", reply_markup=reply_markup
+        )
         return CONFIRM_END
     
     async def end_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1020,108 +621,17 @@ Estimasi ke Level 7: {max(0, remaining)} menit
         
         user_id = query.from_user.id
         
+        # Hapus data user
         if user_id in self.sessions:
             del self.sessions[user_id]
-        if user_id in self.memories:
-            del self.memories[user_id]
+        if user_id in self.bot_names:
+            del self.bot_names[user_id]
         if user_id in self.paused_sessions:
             del self.paused_sessions[user_id]
         
-        await query.edit_message_text("💔 Selesai. /start untuk baru.")
-        return ConversationHandler.END
-    
-    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Help"""
-        help_text = """
-📚 **COMMANDS**
-
-/start - Mulai hubungan baru
-/status - Lihat progress
-/pause - Jeda sesi
-/unpause - Lanjutkan sesi
-/end - Akhiri hubungan
-/help - Pesan ini
-
-💡 **TIPS CEPAT LEVEL**
-• Chat terus (target 30 pesan)
-• Gunakan kata kunci: sayang, cium, peluk
-• Level naik setiap 5 pesan
-• Level 7 dalam 30 menit!
-"""
-        await update.message.reply_text(help_text)
-
-# <--- PASTIKAN ADA 2 BARIS KOSONG DI SINI --->
-# 
-    async def pause_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Pause sesi"""
-        user_id = update.effective_user.id
-        
-        if user_id not in self.sessions:
-            await update.message.reply_text("❌ Tidak ada sesi aktif.")
-            return
-        
-        self.paused_sessions[user_id] = (self.sessions[user_id], datetime.now())
-        del self.sessions[user_id]
-        
-        await update.message.reply_text("⏸️ Sesi di-pause. /unpause untuk lanjut.")
-    
-    async def unpause_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Unpause sesi"""
-        user_id = update.effective_user.id
-        
-        if user_id not in self.paused_sessions:
-            await update.message.reply_text("❌ Tidak ada sesi di-pause.")
-            return
-        
-        rel_id, pause_time = self.paused_sessions[user_id]
-        paused = (datetime.now() - pause_time).total_seconds()
-        
-        if paused > PAUSE_TIMEOUT:
-            del self.paused_sessions[user_id]
-            await update.message.reply_text("⏰ Sesi expired. /start baru.")
-            return
-        
-        self.sessions[user_id] = rel_id
-        del self.paused_sessions[user_id]
-        
-        await update.message.reply_text("▶️ Sesi dilanjutkan!")
-    
-    async def end_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Akhiri hubungan"""
-        user_id = update.effective_user.id
-        
-        if user_id not in self.sessions:
-            await update.message.reply_text("❌ Tidak ada hubungan aktif.")
-            return
-        
-        keyboard = [
-            [InlineKeyboardButton("💔 Ya", callback_data="end_yes")],
-            [InlineKeyboardButton("💕 Tidak", callback_data="end_no")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text("Yakin mau akhiri?", reply_markup=reply_markup)
-        return CONFIRM_END
-    
-    async def end_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Konfirmasi end"""
-        query = update.callback_query
-        await query.answer()
-        
-        if query.data == "end_no":
-            await query.edit_message_text("💕 Lanjutkan...")
-            return ConversationHandler.END
-        
-        user_id = query.from_user.id
-        
-        if user_id in self.sessions:
-            del self.sessions[user_id]
-        if user_id in self.memories:
-            del self.memories[user_id]
-        if user_id in self.paused_sessions:
-            del self.paused_sessions[user_id]
-        
-        await query.edit_message_text("💔 Selesai. /start untuk baru.")
+        await query.edit_message_text(
+            "💔 Selesai.\nKetik /start untuk mulai baru."
+        )
         return ConversationHandler.END
     
     async def start_pause_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1158,11 +668,10 @@ Estimasi ke Level 7: {max(0, remaining)} menit
         
         return ConversationHandler.END
 
-
 # ===================== MAIN =====================
 
 def main():
-    bot = GadisUltimateV54()
+    bot = GadisUltimateV55()
     
     app = Application.builder().token(os.getenv("TELEGRAM_TOKEN")).build()
     
@@ -1190,16 +699,18 @@ def main():
     app.add_handler(CommandHandler("status", bot.status_command))
     app.add_handler(CommandHandler("pause", bot.pause_command))
     app.add_handler(CommandHandler("unpause", bot.unpause_command))
-    app.add_handler(CommandHandler("help", bot.help_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
     
     print("\n" + "="*80)
-    print("🚀 GADIS ULTIMATE V54.0 - FAST ADAPTATION")
+    print("🚀 GADIS ULTIMATE V55.0 - NATURAL CONVERSATION")
     print("="*80)
-    print("\n📈 Target: Level 7 dalam 30 menit!")
-    print("📝 /start untuk memulai\n")
+    print("\n✅ AI Natural: AKTIF")
+    print("✅ Fast Adaptation: 30 menit ke Level 7")
+    print("✅ Smart Memory: Ingat preferensi user")
+    print("\n📝 /start untuk memulai\n")
     
     app.run_polling()
 
 if __name__ == "__main__":
     main()
+
