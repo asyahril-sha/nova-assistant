@@ -503,13 +503,9 @@ class RapidResponseGenerator:
     def __init__(self):
         self.response_templates = {
             "greeting": ["Halo...", "Hai...", "Eh, kamu..."],
-            
             "curious": ["Oh?","Hmm?","Terus?"],
-
-            "flirty": ["*tersenyum*","*menggoda*","*kedip*"],
-            
-            "horny": ["*napas berat*","*menggigit bibir*","*merem*"],
-            
+            "flirty": ["*tersenyum*","*menggoda*","*kedip*"],            
+            "horny": ["*napas berat*","*menggigit bibir*","*merem*"],            
             "touch": ["*merinding*","*bergetar*","*lemas*"]
         }
         
