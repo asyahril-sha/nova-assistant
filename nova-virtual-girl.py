@@ -1436,6 +1436,32 @@ async def close_callback(self, update: Update, context: ContextTypes.DEFAULT_TYP
             f"✨ Ketik /start untuk memulai baru"
         )
         return ConversationHandler.END
+async def cancel_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Membatalkan percakapan"""
+    await update.message.reply_text("❌ Dibataikan. Ketik /start untuk memulai.")
+    return ConversationHandler.END
+
+async def force_reset(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Reset paksa state user (hanya untuk debugging)"""
+    user_id = update.effective_user.id
+    
+    # Hapus semua state
+    if user_id in self.sessions:
+        del self.sessions[user_id]
+    if user_id in self.paused_sessions:
+        del self.paused_sessions[user_id]
+    if user_id in self.bot_names:
+        del self.bot_names[user_id]
+    if user_id in self.bot_roles:
+        del self.bot_roles[user_id]
+    if user_id in self.memories:
+        del self.memories[user_id]
+    if user_id in self.dominance:
+        del self.dominance[user_id]
+    if user_id in self.arousal:
+        del self.arousal[user_id]
+    
+    await update.message.reply_text("🔄 State di-reset. Silakan /start lagi.")
     
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         help_text = """
@@ -1503,33 +1529,6 @@ ROLE_NAMES = {
     "istri_orang": ["Dewi", "Sari", "Rina", "Linda", "Wulan", "Indah"],
     "pdkt": ["Aurora", "Cinta", "Dewi", "Kirana", "Laras", "Maharani"]
 }
-
-async def cancel_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Membatalkan percakapan"""
-    await update.message.reply_text("❌ Dibataikan. Ketik /start untuk memulai.")
-    return ConversationHandler.END
-
-async def force_reset(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Reset paksa state user (hanya untuk debugging)"""
-    user_id = update.effective_user.id
-    
-    # Hapus semua state
-    if user_id in self.sessions:
-        del self.sessions[user_id]
-    if user_id in self.paused_sessions:
-        del self.paused_sessions[user_id]
-    if user_id in self.bot_names:
-        del self.bot_names[user_id]
-    if user_id in self.bot_roles:
-        del self.bot_roles[user_id]
-    if user_id in self.memories:
-        del self.memories[user_id]
-    if user_id in self.dominance:
-        del self.dominance[user_id]
-    if user_id in self.arousal:
-        del self.arousal[user_id]
-    
-    await update.message.reply_text("🔄 State di-reset. Silakan /start lagi.")
 
 # ===================== MAIN =====================
 # ===================== MAIN =====================
