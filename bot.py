@@ -831,7 +831,9 @@ Ayo ngobrol... 💕"""
     return ACTIVE_SESSION
     
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        
     """Handle pesan user"""
+    
     if not update.message or not update.message.text:
         return
     
