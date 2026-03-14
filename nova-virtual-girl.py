@@ -989,7 +989,7 @@ class GadisUltimateV57:
         return self.arousal[user_id]
     
     # ---------- HANDLERS ----------
-    async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Memulai hubungan baru dengan bot"""
     user_id = update.effective_user.id
     user_name = update.effective_user.first_name
