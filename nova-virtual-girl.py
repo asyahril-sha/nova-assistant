@@ -1391,7 +1391,6 @@ async def close_callback(self, update: Update, context: ContextTypes.DEFAULT_TYP
     
     # Kembalikan ke ConversationHandler.END
     return ConversationHandler.END
-        return ConversationHandler.END
     
     async def end_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
