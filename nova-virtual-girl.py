@@ -1537,19 +1537,13 @@ def main():
     
     # Conversation handlers
     start_conv = ConversationHandler(
-        entry_points=[CommandHandler('start', bot.start_command)],  # <-- LINE 1541 (PERBAIKAN)
+        entry_points=[CommandHandler('start', bot.start_command)],
         states={
             0: [CallbackQueryHandler(bot.start_pause_callback, pattern='^(unpause|new)$')],
-            SELECTING_ROLE: [CallbackQueryHandler(bot.agree_18_callback, pattern='^agree_18$'),
-                             CallbackQueryHandler(bot.role_callback, pattern='^role_')],
-        },
-        fallbacks=[CommandHandler('cancel', bot.cancel_command)]
-    )
-    
-    end_conv = ConversationHandler(
-        entry_points=[CommandHandler('end', bot.end_command)],
-        states={
-            CONFIRM_END: [CallbackQueryHandler(bot.end_callback, pattern='^end_')],
+            SELECTING_ROLE: [
+                CallbackQueryHandler(bot.agree_18_callback, pattern='^agree_18$'),
+                CallbackQueryHandler(bot.role_callback, pattern='^role_')
+            ],
         },
         fallbacks=[CommandHandler('cancel', bot.cancel_command)]
     )
