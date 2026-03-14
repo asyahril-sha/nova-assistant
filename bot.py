@@ -430,22 +430,22 @@ class EnhancedShortTermMemory:
             self.wetness_level = min(1.0, self.arousal_level * 0.8)
     
     def process_message(self, message: str) -> Dict:
-    """
-    Proses pesan dengan fast adaptation
-    """
-    # Proses dengan fast memory
-    adaptation = self.fast_memory.process_message(message)
-    
-    # Cek level up
-    level_up = self.fast_memory._update_level_progress()
-    adaptation["level_up"] = level_up
-    
-    # Level up?
-    if level_up:
-        self.fast_memory.current_level = adaptation["current_level"]
-        adaptation["level_up_message"] = f"Naik ke level {self.fast_memory.current_level}!"
-    
-    return adaptation
+        """
+        Proses pesan dengan fast adaptation
+        """
+        # Proses dengan fast memory
+        adaptation = self.fast_memory.process_message(message)
+        
+        # Cek level up
+        level_up = self.fast_memory._update_level_progress()
+        adaptation["level_up"] = level_up
+        
+        # Level up?
+        if level_up:
+            self.fast_memory.current_level = adaptation["current_level"]
+            adaptation["level_up_message"] = f"Naik ke level {self.fast_memory.current_level}!"
+        
+        return adaptation
     
     def get_context(self) -> str:
         """Dapatkan konteks memori"""
@@ -474,25 +474,34 @@ class EnhancedShortTermMemory:
     
     def get_wetness_status(self) -> str:
         """Dapatkan status wetness"""
-        for level, desc in sorted(WETNESS_LEVELS.items(), reverse=True):
-            if self.wetness_level >= level:
-                return desc
-        return "kering"
+        if self.wetness_level >= 0.9:
+            return "banjir"
+        elif self.wetness_level >= 0.7:
+            return "sangat basah"
+        elif self.wetness_level >= 0.5:
+            return "basah"
+        elif self.wetness_level >= 0.3:
+            return "lembab"
+        else:
+            return "kering"
     
     def should_be_horny(self) -> bool:
+        """Cek apakah harus horny"""
         return self.touch_count >= 2 or self.arousal_level > 0.6
     
     def should_climax(self) -> bool:
+        """Cek apakah harus climax"""
         return self.arousal_level >= 1.0
     
     def reset_after_climax(self):
+        """Reset setelah climax"""
         self.touch_count = 0
         self.sensitive_touches = []
         self.arousal_level = 0.0
         self.wetness_level = 0.0
         self.orgasm_count += 1
         self.sex_phase = SexPhase.AFTERCARE
-
+        
 # ===================== RAPID RESPONSE GENERATOR =====================
 
 class RapidResponseGenerator:
