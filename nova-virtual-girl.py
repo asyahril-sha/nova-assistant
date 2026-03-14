@@ -39,11 +39,11 @@ class Config:
     PAUSE_TIMEOUT = 3600
     DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
     TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-    AI_TEMPERATURE = float(os.getenv("AI_TEMPERATURE", 0.9))
-    AI_MAX_TOKENS = int(os.getenv("AI_MAX_TOKENS", 300))
-    AI_TIMEOUT = int(os.getenv("AI_TIMEOUT", 30))
-    MAX_MESSAGES_PER_MINUTE = int(os.getenv("MAX_MESSAGES_PER_MINUTE", 10))
-    CACHE_TIMEOUT = int(os.getenv("CACHE_TIMEOUT", 300))
+    AI_TEMPERATURE = float(os.getenv("AI_TEMPERATURE", "0.9"))          # AMAN
+    AI_MAX_TOKENS = int(os.getenv("AI_MAX_TOKENS", "300"))              # AMAN
+    AI_TIMEOUT = int(os.getenv("AI_TIMEOUT", "30"))                     # AMAN
+    MAX_MESSAGES_PER_MINUTE = int(os.getenv("MAX_MESSAGES_PER_MINUTE", "10"))  # AMAN
+    CACHE_TIMEOUT = int(os.getenv("CACHE_TIMEOUT", "300"))              # AMAN
     MAX_HISTORY = 100
 
 if not Config.DEEPSEEK_API_KEY or not Config.TELEGRAM_TOKEN:
