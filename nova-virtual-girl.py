@@ -1576,6 +1576,7 @@ def main():
     app.add_handler(CommandHandler("couple_next", bot.couple_next))
     app.add_handler(CommandHandler("couple_stop", bot.couple_stop))
     app.add_handler(CommandHandler("reset", bot.force_reset))  # opsional
+    
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
     
     # Error handler
