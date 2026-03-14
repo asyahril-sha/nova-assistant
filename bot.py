@@ -796,28 +796,28 @@ class GadisUltimateV54:
         return SELECTING_ROLE
     
     async def role_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Pilih role"""
-        query = update.callback_query
-        await query.answer()
-        
-        user_id = query.from_user.id
-        role = query.data.replace("role_", "")
-        name = random.choice(self.female_names.get(role, ["Aurora"]))
-        
-        # Simpan ke database
-        cursor = self.db.cursor()
-        cursor.execute("""
-            INSERT INTO relationships (user_id, bot_name, bot_role, level)
-            VALUES (?, ?, ?, ?)
-        """, (user_id, name, role, START_LEVEL))
-        rel_id = cursor.lastrowid
-        self.db.commit()
-        
-        # Set session
-        self.sessions[user_id] = rel_id
-        memory = self.get_memory(user_id)
-        
-        intro = f"""*tersenyum*
+    """Pilih role"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    role = query.data.replace("role_", "")
+    name = random.choice(self.female_names.get(role, ["Aurora"]))
+    
+    # Simpan ke database
+    cursor = self.db.cursor()
+    cursor.execute("""
+        INSERT INTO relationships (user_id, bot_name, bot_role, level)
+        VALUES (?, ?, ?, ?)
+    """, (user_id, name, role, START_LEVEL))
+    rel_id = cursor.lastrowid
+    self.db.commit()
+    
+    # Set session
+    self.sessions[user_id] = rel_id
+    memory = self.get_memory(user_id)
+    
+    intro = f"""*tersenyum*
 
 Aku {name}. Senang kenal kamu.
 
@@ -826,9 +826,9 @@ Makin sering ngobrol, makin dekat kita.
 Target: Level 7 dalam 30 menit!
 
 Ayo ngobrol... 💕"""
-        
-        await query.edit_message_text(intro)
-        return ACTIVE_SESSION
+    
+    await query.edit_message_text(intro)
+    return ACTIVE_SESSION
     
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle pesan user"""
