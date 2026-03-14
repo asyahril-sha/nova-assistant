@@ -884,6 +884,7 @@ Ayo ngobrol... 💕"""
             )
     
     async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        
     """Lihat status"""
     user_id = update.effective_user.id
     
