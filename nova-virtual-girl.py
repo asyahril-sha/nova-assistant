@@ -1498,27 +1498,43 @@ Level 1-12 dalam 45 menit!
 """
         await update.message.reply_text(help_text)
     
-    async def start_pause_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        query = update.callback_query
-        await query.answer()
-        user_id = query.from_user.id
-        
-        if query.data == "unpause":
+async def start_pause_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback untuk memilih lanjutkan atau mulai baru saat ada session pause"""
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    
+    if query.data == "unpause":
+        # Lanjutkan session yang di-pause
+        if user_id in self.paused_sessions:
             rel_id, _ = self.paused_sessions[user_id]
             self.sessions[user_id] = rel_id
             del self.paused_sessions[user_id]
             memory = self.get_memory(user_id)
             await query.edit_message_text(f"▶️ **Sesi dilanjutkan!**\n{memory.get_wetness_description()}")
             return ACTIVE_SESSION
-        elif query.data == "new":
-            if user_id in self.paused_sessions:
-                del self.paused_sessions[user_id]
-            disclaimer = "⚠️ **PERINGATAN DEWASA (18+)** ⚠️\n\nBot ini mengandung konten dewasa..."
-            keyboard = [[InlineKeyboardButton("✅ Saya setuju (18+)", callback_data="agree_18")]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text(disclaimer, reply_markup=reply_markup)
-            return SELECTING_ROLE
-        return ConversationHandler.END
+        else:
+            await query.edit_message_text("❌ Tidak ada session yang di-pause.")
+            return ConversationHandler.END
+            
+    elif query.data == "new":
+        # Mulai baru - hapus session pause
+        if user_id in self.paused_sessions:
+            del self.paused_sessions[user_id]
+        
+        # Tampilkan disclaimer 18+
+        disclaimer = (
+            "⚠️ **PERINGATAN DEWASA (18+)** ⚠️\n\n"
+            "Bot ini mengandung konten dewasa, termasuk dialog seksual eksplisit dan simulasi hubungan intim. "
+            "Dengan melanjutkan, Anda menyatakan bahwa Anda berusia 18 tahun ke atas dan setuju untuk menggunakan bot ini secara bertanggung jawab. "
+            "Konten ini hanya untuk hiburan pribadi."
+        )
+        keyboard = [[InlineKeyboardButton("✅ Saya setuju (18+)", callback_data="agree_18")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(disclaimer, reply_markup=reply_markup)
+        return SELECTING_ROLE
+    
+    return ConversationHandler.END
 
 ROLE_NAMES = {
     "ipar": ["Sari", "Dewi", "Rina", "Maya", "Wulan", "Indah"],
