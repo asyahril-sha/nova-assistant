@@ -1505,6 +1505,7 @@ ROLE_NAMES = {
 }
 
 # ===================== MAIN =====================
+# ===================== MAIN =====================
 def main():
     bot = GadisUltimateV57()
     app = Application.builder().token(Config.TELEGRAM_TOKEN).build()
@@ -1517,7 +1518,7 @@ def main():
             SELECTING_ROLE: [CallbackQueryHandler(bot.agree_18_callback, pattern='^agree_18$'),
                              CallbackQueryHandler(bot.role_callback, pattern='^role_')],
         },
-        fallbacks=[CommandHandler('cancel', bot.cancel_command)]  # <-- TAMBAHKAN
+        fallbacks=[CommandHandler('cancel', bot.cancel_command)]
     )
     
     end_conv = ConversationHandler(
@@ -1525,7 +1526,7 @@ def main():
         states={
             CONFIRM_END: [CallbackQueryHandler(bot.end_callback, pattern='^end_')],
         },
-        fallbacks=[CommandHandler('cancel', bot.cancel_command)]  # <-- TAMBAHKAN
+        fallbacks=[CommandHandler('cancel', bot.cancel_command)]
     )
     
     close_conv = ConversationHandler(
@@ -1533,9 +1534,10 @@ def main():
         states={
             CONFIRM_CLOSE: [CallbackQueryHandler(bot.close_callback, pattern='^close_')],
         },
-        fallbacks=[CommandHandler('cancel', bot.cancel_command)]  # <-- TAMBAHKAN
+        fallbacks=[CommandHandler('cancel', bot.cancel_command)]
     )
     
+    # Tambahkan semua handler
     app.add_handler(start_conv)
     app.add_handler(end_conv)
     app.add_handler(close_conv)
@@ -1547,6 +1549,7 @@ def main():
     app.add_handler(CommandHandler("couple", bot.couple_command))
     app.add_handler(CommandHandler("couple_next", bot.couple_next))
     app.add_handler(CommandHandler("couple_stop", bot.couple_stop))
+    app.add_handler(CommandHandler("reset", bot.force_reset))  # opsional
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
     
     # Error handler
