@@ -990,16 +990,18 @@ class GadisUltimateV57:
     
     # ---------- HANDLERS ----------
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Memulai hubungan baru dengan bot"""
     user_id = update.effective_user.id
+    user_name = update.effective_user.first_name
     
-    # CEK: Apakah user sudah punya sesi aktif?
+    # Cek apakah sudah ada sesi aktif
     if user_id in self.sessions:
         await update.message.reply_text(
             "Kamu sudah memiliki sesi aktif. Ketik /close untuk menutup sesi atau /pause untuk jeda."
         )
         return ConversationHandler.END
     
-    # CEK: Apakah user punya sesi yang di-pause?
+    # Cek apakah ada sesi di-pause
     if user_id in self.paused_sessions:
         keyboard = [
             [InlineKeyboardButton("✅ Lanjutkan", callback_data="unpause")],
@@ -1007,9 +1009,9 @@ class GadisUltimateV57:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text("⚠️ Ada sesi yang di-pause. Pilih:", reply_markup=reply_markup)
-        return 0  # State khusus untuk pause
+        return 0
     
-    # Jika tidak ada sesi, tampilkan disclaimer
+    # Tampilkan disclaimer 18+
     disclaimer = (
         "⚠️ **PERINGATAN DEWASA (18+)** ⚠️\n\n"
         "Bot ini mengandung konten dewasa, termasuk dialog seksual eksplisit dan simulasi hubungan intim. "
