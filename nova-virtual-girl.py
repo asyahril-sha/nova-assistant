@@ -990,30 +990,36 @@ class GadisUltimateV57:
     
     # ---------- HANDLERS ----------
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_id = update.effective_user.id
-        if user_id in self.sessions:
-            await update.message.reply_text("Kamu sudah memiliki sesi aktif. Ketik /close untuk menutup sesi atau /pause untuk jeda.")
-            return ConversationHandler.END
-        
-        if user_id in self.paused_sessions:
-            keyboard = [
-                [InlineKeyboardButton("✅ Lanjutkan", callback_data="unpause")],
-                [InlineKeyboardButton("🆕 Mulai Baru", callback_data="new")],
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await update.message.reply_text("⚠️ Ada sesi yang di-pause. Pilih:", reply_markup=reply_markup)
-            return 0
-        
-        disclaimer = (
-            "⚠️ **PERINGATAN DEWASA (18+)** ⚠️\n\n"
-            "Bot ini mengandung konten dewasa, termasuk dialog seksual eksplisit dan simulasi hubungan intim. "
-            "Dengan melanjutkan, Anda menyatakan bahwa Anda berusia 18 tahun ke atas dan setuju untuk menggunakan bot ini secara bertanggung jawab. "
-            "Konten ini hanya untuk hiburan pribadi."
+    user_id = update.effective_user.id
+    
+    # CEK: Apakah user sudah punya sesi aktif?
+    if user_id in self.sessions:
+        await update.message.reply_text(
+            "Kamu sudah memiliki sesi aktif. Ketik /close untuk menutup sesi atau /pause untuk jeda."
         )
-        keyboard = [[InlineKeyboardButton("✅ Saya setuju (18+)", callback_data="agree_18")]]
+        return ConversationHandler.END
+    
+    # CEK: Apakah user punya sesi yang di-pause?
+    if user_id in self.paused_sessions:
+        keyboard = [
+            [InlineKeyboardButton("✅ Lanjutkan", callback_data="unpause")],
+            [InlineKeyboardButton("🆕 Mulai Baru", callback_data="new")],
+        ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(disclaimer, reply_markup=reply_markup)
-        return SELECTING_ROLE
+        await update.message.reply_text("⚠️ Ada sesi yang di-pause. Pilih:", reply_markup=reply_markup)
+        return 0  # State khusus untuk pause
+    
+    # Jika tidak ada sesi, tampilkan disclaimer
+    disclaimer = (
+        "⚠️ **PERINGATAN DEWASA (18+)** ⚠️\n\n"
+        "Bot ini mengandung konten dewasa, termasuk dialog seksual eksplisit dan simulasi hubungan intim. "
+        "Dengan melanjutkan, Anda menyatakan bahwa Anda berusia 18 tahun ke atas dan setuju untuk menggunakan bot ini secara bertanggung jawab. "
+        "Konten ini hanya untuk hiburan pribadi."
+    )
+    keyboard = [[InlineKeyboardButton("✅ Saya setuju (18+)", callback_data="agree_18")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(disclaimer, reply_markup=reply_markup)
+    return SELECTING_ROLE
     
     async def couple_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Memulai mode couple roleplay"""
@@ -1350,34 +1356,39 @@ Aktivitas terakhir: {memory.activity_history[-1]['activity'] if memory.activity_
         return CONFIRM_CLOSE
     
     async def close_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        query = update.callback_query
-        await query.answer()
-        user_id = query.from_user.id
-        
-        if query.data == "close_no":
-            await query.edit_message_text("💕 Lanjutkan...")
-            return ConversationHandler.END
-        
-        # Hapus sesi dari memori, data di database tetap
-        if user_id in self.sessions:
-            del self.sessions[user_id]
-        if user_id in self.paused_sessions:
-            del self.paused_sessions[user_id]
-        if user_id in self.bot_names:
-            del self.bot_names[user_id]
-        if user_id in self.bot_roles:
-            del self.bot_roles[user_id]
-        if user_id in self.memories:
-            del self.memories[user_id]
-        if user_id in self.dominance:
-            del self.dominance[user_id]
-        if user_id in self.arousal:
-            del self.arousal[user_id]
-        
-        await query.edit_message_text(
-            "🔒 **Sesi ditutup**\n\n"
-            "Semua percakapan telah disimpan. Kamu bisa memulai role baru kapan saja dengan /start."
-        )
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    
+    if query.data == "close_no":
+        await query.edit_message_text("💕 Lanjutkan...")
+        return ConversationHandler.END
+    
+    # Hapus sesi dari memori, data di database tetap
+    if user_id in self.sessions:
+        del self.sessions[user_id]
+    if user_id in self.paused_sessions:
+        del self.paused_sessions[user_id]
+    if user_id in self.bot_names:
+        del self.bot_names[user_id]
+    if user_id in self.bot_roles:
+        del self.bot_roles[user_id]
+    if user_id in self.memories:
+        del self.memories[user_id]
+    if user_id in self.dominance:
+        del self.dominance[user_id]
+    if user_id in self.arousal:
+        del self.arousal[user_id]
+    
+    # Kirim pesan sukses
+    await query.edit_message_text(
+        "🔒 **Sesi ditutup**\n\n"
+        "Semua percakapan telah disimpan.\n"
+        "Ketik /start untuk memulai hubungan baru."
+    )
+    
+    # Kembalikan ke ConversationHandler.END
+    return ConversationHandler.END
         return ConversationHandler.END
     
     async def end_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1505,7 +1516,7 @@ def main():
             SELECTING_ROLE: [CallbackQueryHandler(bot.agree_18_callback, pattern='^agree_18$'),
                              CallbackQueryHandler(bot.role_callback, pattern='^role_')],
         },
-        fallbacks=[CommandHandler('cancel', lambda u,c: ConversationHandler.END)]
+        fallbacks=[CommandHandler('cancel', bot.cancel_command)]  # <-- TAMBAHKAN
     )
     
     end_conv = ConversationHandler(
@@ -1513,7 +1524,7 @@ def main():
         states={
             CONFIRM_END: [CallbackQueryHandler(bot.end_callback, pattern='^end_')],
         },
-        fallbacks=[CommandHandler('cancel', lambda u,c: ConversationHandler.END)]
+        fallbacks=[CommandHandler('cancel', bot.cancel_command)]  # <-- TAMBAHKAN
     )
     
     close_conv = ConversationHandler(
@@ -1521,7 +1532,7 @@ def main():
         states={
             CONFIRM_CLOSE: [CallbackQueryHandler(bot.close_callback, pattern='^close_')],
         },
-        fallbacks=[CommandHandler('cancel', lambda u,c: ConversationHandler.END)]
+        fallbacks=[CommandHandler('cancel', bot.cancel_command)]  # <-- TAMBAHKAN
     )
     
     app.add_handler(start_conv)
