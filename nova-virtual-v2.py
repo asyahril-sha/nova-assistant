@@ -211,33 +211,8 @@ class ArousalState(Enum):
     VERY_HORNY = "sangat horny"
     CLIMAX = "klimaks"
 
-# ===================== DATABASE MANAGER =====================
-class DatabaseManager:
-    def __init__(self):
-        self.db_path = Config.DB_PATH
-        self._local = threading.local()
-        self._init_db()
-    
-    def _get_conn(self):
-        if not hasattr(self._local, 'conn'):
-            self._local.conn = sqlite3.connect(self.db_path, timeout=10)
-            self._local.conn.row_factory = sqlite3.Row
-        return self._local.conn
-    
-    @contextmanager
-    def cursor(self):
-        conn = self._get_conn()
-        cursor = conn.cursor()
-        try:
-            yield cursor
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            cursor.close()
-    
-    def _init_db(self):
+        def _init_db(self):
+        """Inisialisasi tabel database dengan semua kolom yang diperlukan"""
         with self.cursor() as c:
             # Tabel relationships dengan kolom untuk pakaian
             c.execute("""
@@ -258,9 +233,9 @@ class DatabaseManager:
                     breast_size TEXT,
                     hijab BOOLEAN DEFAULT 0,
                     most_sensitive_area TEXT,
-                    -- Pakaian
+                    -- Pakaian (dengan nama kolom yang konsisten)
                     current_clothing TEXT,
-                    clothing_last_changed TIMESTAMP,
+                    last_clothing_change TIMESTAMP,  -- ← PERBAIKAN: ganti dari clothing_last_changed
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     last_active TIMESTAMP
                 )
@@ -305,6 +280,8 @@ class DatabaseManager:
                     total_interactions INTEGER DEFAULT 0
                 )
             """)
+            
+            print("✅ Tabel relationships berhasil dibuat/diverifikasi")
 
     # ========== CONVERSATION METHODS ==========
     def save_conversation(self, rel_id, role, content, mood=None, arousal=None):
