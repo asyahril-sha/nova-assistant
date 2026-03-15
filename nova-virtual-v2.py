@@ -5509,7 +5509,7 @@ def main():
     bot = GadisUltimateV59()
     
     # Build application with Telegram token
-    app = Application.builder().token(Config.TELEGRAM_TOKEN).build()
+    app = Application.builder().token(Config.TELEGRAM_TOKEN).connect_timeout(30).read_timeout(30).write_timeout(30).pool_timeout(30).build()
     
     # ===== CONVERSATION HANDLERS =====
     # These handle multi-step interactions
