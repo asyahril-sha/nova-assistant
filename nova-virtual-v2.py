@@ -211,7 +211,34 @@ class ArousalState(Enum):
     VERY_HORNY = "sangat horny"
     CLIMAX = "klimaks"
 
-    # ========== INIT DB ==========
+# ===================== DATABASE MANAGER =====================
+class DatabaseManager:
+    """Manajemen database SQLite dengan connection pooling"""
+    
+    def __init__(self):
+        self.db_path = Config.DB_PATH
+        self._local = threading.local()
+        self._init_db()
+    
+    def _get_conn(self):
+        if not hasattr(self._local, 'conn'):
+            self._local.conn = sqlite3.connect(self.db_path, timeout=10)
+            self._local.conn.row_factory = sqlite3.Row
+        return self._local.conn
+    
+    @contextmanager
+    def cursor(self):
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            yield cursor
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            cursor.close()
+    
     def _init_db(self):
         """Inisialisasi tabel database dengan semua kolom yang diperlukan"""
         with self.cursor() as c:
@@ -228,7 +255,7 @@ class ArousalState(Enum):
                     total_messages INTEGER DEFAULT 0,
                     total_climax INTEGER DEFAULT 0,
                     
-                    -- Atribut fisik (untuk perkenalan diri)
+                    -- Atribut fisik
                     hair_style TEXT,
                     height INTEGER,
                     weight INTEGER,
@@ -236,7 +263,7 @@ class ArousalState(Enum):
                     hijab BOOLEAN DEFAULT 0,
                     most_sensitive_area TEXT,
                     
-                    -- Pakaian (untuk fitur pakaian dinamis)
+                    -- Pakaian
                     current_clothing TEXT,
                     last_clothing_change TIMESTAMP,
                     
@@ -246,7 +273,7 @@ class ArousalState(Enum):
                 )
             """)
             
-            # Tabel conversations untuk menyimpan riwayat chat
+            # Tabel conversations
             c.execute("""
                 CREATE TABLE IF NOT EXISTS conversations (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -260,7 +287,7 @@ class ArousalState(Enum):
                 )
             """)
             
-            # Tabel memories untuk menyimpan memori penting
+            # Tabel memories
             c.execute("""
                 CREATE TABLE IF NOT EXISTS memories (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -273,7 +300,7 @@ class ArousalState(Enum):
                 )
             """)
             
-            # Tabel preferences untuk menyimpan preferensi user
+            # Tabel preferences
             c.execute("""
                 CREATE TABLE IF NOT EXISTS preferences (
                     user_id INTEGER PRIMARY KEY,
@@ -287,93 +314,12 @@ class ArousalState(Enum):
             """)
             
             print("✅ Database initialized successfully")
-            print("   • Table 'relationships' created with all columns")
-            print("   • Table 'conversations' created")
-            print("   • Table 'memories' created")
-            print("   • Table 'preferences' created")
-            
-    # ========== CONVERSATION METHODS ==========
-    def save_conversation(self, rel_id, role, content, mood=None, arousal=None):
-        with self.cursor() as c:
-            c.execute("""
-                INSERT INTO conversations 
-                (relationship_id, role, content, mood, arousal)
-                VALUES (?, ?, ?, ?, ?)
-            """, (rel_id, role, content, mood, arousal))
     
-    def get_conversation_history(self, rel_id, limit=50):
-        with self.cursor() as c:
-            c.execute("""
-                SELECT role, content, mood, arousal, timestamp
-                FROM conversations
-                WHERE relationship_id = ?
-                ORDER BY timestamp ASC
-                LIMIT ?
-            """, (rel_id, limit))
-            return [dict(row) for row in c.fetchall()]
-    
-    # ========== MEMORY METHODS ==========
-    def save_memory(self, rel_id, memory, importance, emotion):
-        with self.cursor() as c:
-            c.execute("""
-                INSERT INTO memories 
-                (relationship_id, memory, importance, emotion)
-                VALUES (?, ?, ?, ?)
-            """, (rel_id, memory, importance, emotion))
-    
-    def get_memories(self, rel_id, limit=10):
-        with self.cursor() as c:
-            c.execute("""
-                SELECT memory, importance, emotion, timestamp
-                FROM memories
-                WHERE relationship_id = ?
-                ORDER BY importance DESC, timestamp DESC
-                LIMIT ?
-            """, (rel_id, limit))
-            return [dict(row) for row in c.fetchall()]
-    
-    # ========== PREFERENCES METHODS ==========
-    def update_preferences(self, user_id, **scores):
-        with self.cursor() as c:
-            c.execute("SELECT * FROM preferences WHERE user_id=?", (user_id,))
-            if c.fetchone():
-                fields = []
-                values = []
-                for key, value in scores.items():
-                    fields.append(f"{key}=?")
-                    values.append(value)
-                values.append(user_id)
-                c.execute(f"""
-                    UPDATE preferences
-                    SET {', '.join(fields)}
-                    WHERE user_id=?
-                """, values)
-            else:
-                fields = ['user_id'] + list(scores.keys())
-                placeholders = ['?'] * len(fields)
-                values = [user_id] + list(scores.values())
-                c.execute(f"""
-                    INSERT INTO preferences ({', '.join(fields)})
-                    VALUES ({', '.join(placeholders)})
-                """, values)
-    
-    def get_preferences(self, user_id):
-        with self.cursor() as c:
-            c.execute("SELECT * FROM preferences WHERE user_id=?", (user_id,))
-            row = c.fetchone()
-            return dict(row) if row else None
-
     # ========== RELATIONSHIP METHODS ==========
-
     def create_relationship(self, user_id, bot_name, bot_role, physical_attrs=None, clothing=None):
         """Buat hubungan baru dengan atribut fisik dan pakaian opsional"""
-        print(f"📝 create_relationship untuk user {user_id}")
-        print(f"   physical_attrs: {physical_attrs}")
-        print(f"   clothing: {clothing}")
-        
         with self.cursor() as c:
             if physical_attrs and clothing:
-                print("   Menjalankan query dengan physical_attrs dan clothing")
                 c.execute("""
                     INSERT OR REPLACE INTO relationships 
                     (user_id, bot_name, bot_role, last_active,
@@ -389,7 +335,6 @@ class ArousalState(Enum):
                       physical_attrs.get('most_sensitive_area'),
                       clothing))
             elif physical_attrs:
-                print("   Menjalankan query dengan physical_attrs saja")
                 c.execute("""
                     INSERT OR REPLACE INTO relationships 
                     (user_id, bot_name, bot_role, last_active,
@@ -403,7 +348,6 @@ class ArousalState(Enum):
                       physical_attrs.get('hijab', 0),
                       physical_attrs.get('most_sensitive_area')))
             else:
-                print("   Menjalankan query tanpa physical_attrs")
                 c.execute("""
                     INSERT OR REPLACE INTO relationships 
                     (user_id, bot_name, bot_role, last_active)
@@ -430,7 +374,7 @@ class ArousalState(Enum):
                 SET {', '.join(fields)}, last_active=CURRENT_TIMESTAMP
                 WHERE user_id=?
             """, values)
-            
+    
     def update_clothing(self, user_id, clothing):
         """Update pakaian dan timestamp perubahan"""
         with self.cursor() as c:
