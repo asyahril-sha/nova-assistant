@@ -4299,7 +4299,7 @@ class GadisUltimateV59:
 
 # ===================== ADMIN COMMANDS =====================
     
-        async def admin_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def admin_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Menu admin - menampilkan semua command admin"""
         user_id = update.effective_user.id
         username = update.effective_user.username or update.effective_user.first_name
