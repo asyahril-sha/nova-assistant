@@ -1,4 +1,4 @@
-"deploy": {
+deploy": {
     "startCommand": "python nova-virtual-v3.py",
     "healthcheckPath": "/",
     "restartPolicyType": "ON_FAILURE",
