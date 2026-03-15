@@ -5508,8 +5508,20 @@ def main():
     # Initialize bot instance
     bot = GadisUltimateV59()
     
-    # Build application with Telegram token
-    app = Application.builder().token(Config.TELEGRAM_TOKEN).connect_timeout(30).read_timeout(30).write_timeout(30).pool_timeout(30).build()
+    # ===== SETUP REQUEST DENGAN TIMEOUT BESAR (SOLUSI 2) =====
+    from telegram.request import HTTPXRequest
+    
+    # Buat request dengan timeout besar
+    request = HTTPXRequest(
+        connection_pool_size=20,           # Jumlah koneksi parallel
+        connect_timeout=60,                 # Timeout koneksi (60 detik)
+        read_timeout=60,                     # Timeout baca data
+        write_timeout=60,                     # Timeout kirim data
+        pool_timeout=60,                      # Timeout ambil koneksi dari pool
+    )
+    
+    # Build application dengan custom request
+    app = Application.builder().token(Config.TELEGRAM_TOKEN).request(request).build()
     
     # ===== CONVERSATION HANDLERS =====
     # These handle multi-step interactions
@@ -5593,10 +5605,7 @@ def main():
     print("  • Conversation handlers created")
     print("  • Starting handler registration...")
     
-    # We'll continue in Part 11B with adding all handlers
-
-# ========== 11B: MAIN FUNCTION - COMMAND REGISTRATION ==========
-# ===== ADD ALL HANDLERS TO APPLICATION =====
+    # ===== ADD ALL HANDLERS TO APPLICATION =====
     
     # Add conversation handlers
     app.add_handler(start_conv)
@@ -5717,10 +5726,20 @@ def main():
     print("🚀 Bot is running... Press Ctrl+C to stop.")
     print("="*70 + "\n")
     
-    # ========== 11C: MAIN FUNCTION - START BOT ==========
+    # ========== 11C: MAIN FUNCTION - START BOT DENGAN TIMEOUT (SOLUSI 3) ==========
     print("⏱️  Starting polling...")
-    app.run_polling()
     
+    # Jalankan polling dengan timeout besar
+    app.run_polling(
+        timeout=60,                  # Timeout polling 60 detik
+        read_timeout=60,             # Read timeout 60 detik
+        write_timeout=60,             # Write timeout 60 detik
+        connect_timeout=60,           # Connect timeout 60 detik
+        pool_timeout=60,              # Pool timeout 60 detik
+        drop_pending_updates=True     # Hapus update lama saat start
+    )
+
+
 # ===================== ENTRY POINT =====================
 
 if __name__ == "__main__":
@@ -5761,7 +5780,6 @@ if __name__ == "__main__":
         
         # Exit with error code
         sys.exit(1)
-
 
 # ===================== END OF FILE =====================
 # GADIS ULTIMATE V59.0 - THE PERFECT HUMAN
