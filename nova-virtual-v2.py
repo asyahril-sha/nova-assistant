@@ -4332,7 +4332,7 @@ class GadisUltimateV59:
         
         # HAPUS parse_mode='Markdown' - kirim sebagai teks biasa
         await update.message.reply_text(text)
-    
+
     async def stats_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Tampilkan statistik lengkap bot (untuk admin)"""
         user_id = update.effective_user.id
@@ -4343,34 +4343,22 @@ class GadisUltimateV59:
         
         stats = self.get_stats()
         
-        # Format statistik
         text = (
-            f"📊 **STATISTIK BOT**\n\n"
-            f"**⏱️ Uptime:** {stats['uptime']}\n"
-            f"**👥 User:**\n"
+            f"📊 STATISTIK BOT\n\n"
+            f"⏱️ Uptime: {stats['uptime']}\n"
+            f"👥 User:\n"
             f"• Aktif: {stats['active_users']}\n"
             f"• Pause: {stats['paused_users']}\n"
             f"• Total: {stats['total_users']}\n\n"
-            f"**💬 Pesan:**\n"
+            f"💬 Pesan:\n"
             f"• Total pesan: {stats['total_messages']}\n"
             f"• Total command: {stats['total_commands']}\n"
             f"• Total climax: {stats['total_climax']}\n\n"
-            f"**👫 Couple Mode:** {stats['couple_sessions']} sesi aktif\n\n"
-            f"**🧠 Memory Usage:**\n"
-            f"• Memories: {stats['memory_usage']['memories']}\n"
-            f"• Dominance: {stats['memory_usage']['dominance']}\n"
-            f"• Arousal: {stats['memory_usage']['arousal']}\n"
-            f"• Sessions: {stats['memory_usage']['sessions']}\n\n"
+            f"👫 Couple Mode: {stats['couple_sessions']} sesi aktif"
         )
         
-        # Tambah cache stats jika ada
-        if 'cache_stats' in stats:
-            text += f"**💾 Cache:**\n"
-            text += f"• Size: {stats['cache_stats']['cache_size']}\n"
-            text += f"• Hit rate: {stats['cache_stats']['hit_rate']}\n"
-        
-        await update.message.reply_text(text, parse_mode='Markdown')
-    
+        await update.message.reply_text(text)
+
     async def broadcast_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Kirim pesan broadcast ke semua user aktif"""
         user_id = update.effective_user.id
@@ -4379,22 +4367,19 @@ class GadisUltimateV59:
             await update.message.reply_text("⛔ Anda bukan admin.")
             return
         
-        # Cek apakah ada pesan
         if not context.args:
             await update.message.reply_text(
-                "📢 **Broadcast**\n\n"
+                "📢 Broadcast\n\n"
                 "Gunakan: /broadcast <pesan>\n\n"
                 "Contoh: /broadcast Halo semua, bot akan maintenance 5 menit lagi"
             )
             return
         
-        # Gabungkan args menjadi pesan
         message = " ".join(context.args)
         
-        # Konfirmasi
         confirm_text = (
-            f"📢 **Broadcast akan dikirim ke {self.get_active_users_count()} user aktif**\n\n"
-            f"Pesan:\n```\n{message}\n```\n\n"
+            f"📢 Broadcast akan dikirim ke {self.get_active_users_count()} user aktif\n\n"
+            f"Pesan:\n{message}\n\n"
             f"Yakin ingin mengirim?"
         )
         
@@ -4406,10 +4391,8 @@ class GadisUltimateV59:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        # Simpan pesan ke context untuk digunakan di callback
         context.user_data['broadcast_message'] = message
-        
-        await update.message.reply_text(confirm_text, reply_markup=reply_markup, parse_mode='Markdown')
+        await update.message.reply_text(confirm_text, reply_markup=reply_markup)
     
     async def broadcast_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Callback untuk konfirmasi broadcast"""
