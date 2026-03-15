@@ -4297,7 +4297,7 @@ class GadisUltimateV59:
 
 # ========== 9C: MAIN BOT CLASS - ADMIN COMMANDS ==========
 
-    # ===================== ADMIN COMMANDS =====================
+# ===================== ADMIN COMMANDS =====================
     
         async def admin_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Menu admin - menampilkan semua command admin"""
