@@ -74,6 +74,60 @@ if not Config.DEEPSEEK_API_KEY or not Config.TELEGRAM_TOKEN:
     print("ADMIN_ID=your_telegram_id (opsional)")
     sys.exit(1)
 
+# ===================== DATABASE MIGRATION =====================
+# Tambahkan kode ini SETELAH validasi API Keys dan SEBELUM STATE
+
+def migrate_database():
+    """Migrate database ke versi terbaru dengan menambahkan kolom yang hilang"""
+    db_path = Config.DB_PATH
+    if not os.path.exists(db_path):
+        print(f"📁 Database {db_path} akan dibuat saat pertama kali digunakan")
+        return
+    
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Cek kolom yang ada di tabel relationships
+        cursor.execute("PRAGMA table_info(relationships)")
+        columns = [col[1] for col in cursor.fetchall()]
+        
+        print("📊 Cek database untuk migrasi...")
+        
+        # Daftar kolom yang harus ada (dari versi terbaru)
+        required_columns = {
+            "current_clothing": "TEXT DEFAULT 'pakaian biasa'",
+            "last_clothing_change": "TIMESTAMP",
+            "hair_style": "TEXT",
+            "height": "INTEGER",
+            "weight": "INTEGER",
+            "breast_size": "TEXT",
+            "hijab": "BOOLEAN DEFAULT 0",
+            "most_sensitive_area": "TEXT"
+        }
+        
+        # Tambahkan kolom yang hilang satu per satu
+        for col_name, col_type in required_columns.items():
+            if col_name not in columns:
+                try:
+                    cursor.execute(f"ALTER TABLE relationships ADD COLUMN {col_name} {col_type}")
+                    print(f"  ✅ Kolom '{col_name}' berhasil ditambahkan")
+                except Exception as e:
+                    print(f"  ⚠️ Gagal menambahkan '{col_name}': {e}")
+            else:
+                print(f"  ⏭️  Kolom '{col_name}' sudah ada")
+        
+        conn.commit()
+        conn.close()
+        print("✅ Migrasi database selesai!\n")
+        
+    except Exception as e:
+        print(f"⚠️ Error saat migrasi database: {e}")
+        print("  Bot akan tetap berjalan, tapi fitur baru mungkin tidak berfungsi.\n")
+
+# Panggil fungsi migrasi
+migrate_database()
+
 # ===================== STATE =====================
 (
     SELECTING_ROLE,      # 0
