@@ -6901,7 +6901,6 @@ print("="*70)
     
     async def role_pdkt_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await self.role_callback(update, context)
-
 # ===================== BAB 9.2: Status & Dominance Commands =====================
 
     async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
