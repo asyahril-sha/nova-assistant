@@ -3998,7 +3998,6 @@ class RateLimiter:
             "time_window": self.time_window
     }
 
-
 # ===================== ADDITIONAL HELPER FUNCTIONS =====================
 
 class TextFormatter:
